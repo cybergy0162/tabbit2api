@@ -5,7 +5,7 @@ import logging
 import asyncio
 from typing import Any, Optional, List, Dict
 
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, HTTPException, Header, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -14,6 +14,15 @@ from core.tabbit_client import TabbitClient
 from core.token_manager import TokenManager
 from core.log_store import LogStore, LogEntry
 from core.config import ConfigManager
+
+# Agent modules (optional, enabled via config)
+from core.agent.message_cleaner import build_agent_content
+from core.agent.context_manager import SlidingWindow, ContextCompressor, estimate_tokens
+from core.agent.agent_router import ModelSelector
+from core.agent.tool_handler import (
+    parse_openai_tools, build_tool_prompt, detect_tool_call,
+    build_openai_tool_response, add_tool_call, get_tool_chain, clear_tool_chain,
+)
 
 logger = logging.getLogger("tabbit2openai")
 
@@ -250,6 +259,16 @@ class ChatMessage(BaseModel):
     content: str | List[ChatMessageContentPart]
 
 
+class ToolChoice(BaseModel):
+    type: str = "function"
+    function: Optional[dict] = None
+
+
+class Tool(BaseModel):
+    type: str = "function"
+    function: dict
+
+
 class ChatCompletionRequest(BaseModel):
     model: Optional[str] = None
     messages: List[ChatMessage]
@@ -263,6 +282,8 @@ class ChatCompletionRequest(BaseModel):
     frequency_penalty: Optional[float] = None
     logit_bias: Optional[Dict[str, float]] = None
     user: Optional[str] = None
+    tools: Optional[List[Tool]] = None
+    tool_choice: Optional[Any] = None  # "auto", "none", {"type":"function","function":{"name":"xxx"}}
 
 
 class SimpleChatRequest(BaseModel):
@@ -431,61 +452,73 @@ async def chat_completions(
             content = _normalize_content(req.content)
         else:
             model_id = (req.model or _cfg.get("openai", "default_model", default="best")).lower() if _cfg else (req.model or "best").lower()
+            
+            # Agent router: detect phase and potentially remap model
+            agent_config = _cfg.get("agent", default={}) if _cfg else {}
+            if agent_config.get("router", {}).get("enabled", False):
+                selector = ModelSelector()
+                model_id = selector.resolve(model_id)
+            
             tabbit_model = tabbit_client.MODEL_MAP.get(model_id, model_id)
             
-            # DEBUG: log full request from WorkBuddy
-            logger.info(f"[DEBUG] Request model={model_id} tabbit_model={tabbit_model} messages_count={len(req.messages)}")
-            for i, m in enumerate(req.messages):
-                logger.info(f"[DEBUG]   msg[{i}] role={m.role} content_len={len(str(m.content))} content_preview={str(m.content)[:200]}")
-            
-            import re as _re
-            # Only send the last user message — Tabbit room maintains its own history
-            # WorkBuddy sends huge messages with workspace context; we extract the real question
-            last_user = ""
-            for m in reversed(req.messages):
-                if m.role == "user":
-                    raw = _normalize_content(m.content)
-                    # Extract from <user_query>...</user_query> tags if present
-                    match = _re.search(r'<user_query>(.*?)</user_query>', raw, _re.DOTALL)
-                    if match:
-                        last_user = match.group(1).strip()
-                    elif len(raw) > 2000:
-                        # Huge user message (WorkBuddy workspace context) — take last meaningful line(s)
-                        # Strip the initial OS/environment info, get the actual question at the end
-                        lines = raw.strip().split('\n')
-                        # Work backwards to find the actual user query (short lines at the end)
-                        meaningful = []
-                        for line in reversed(lines):
-                            line = line.strip()
-                            if not line:
-                                continue
-                            # Skip long environment lines
-                            if len(line) > 200 or line.startswith(('OS Version:', 'Shell:', 'Workspace:', 'Current date:', '<system-reminder', '</system-reminder>', '```')):
-                                continue
-                            meaningful.insert(0, line)
-                            if len('\n'.join(meaningful)) > 500:
-                                break
-                        last_user = '\n'.join(meaningful) if meaningful else raw[-500:]
-                    else:
-                        last_user = raw
-                    break
-            
-            # Also prepend system message if present (filter out WorkBuddy internal prompts)
-            system_msgs = []
-            for m in req.messages:
-                if m.role == "system":
-                    content_str = _normalize_content(m.content)
-                    # Skip WorkBuddy/Trae internal title-generation prompts
-                    if 'isNewTopic' in content_str or 'Generate a concise' in content_str or 'sentence-case title' in content_str or 'Respond with EXACTLY one JSON object' in content_str:
-                        continue
-                    # Skip long agent system prompts (>2000 chars = WorkBuddy agent prompt, not user's)
-                    if len(content_str) > 2000:
-                        continue
-                    system_msgs.append(content_str)
-            if system_msgs:
-                content = "\n\n".join(system_msgs) + "\n\n" + last_user
+            # Agent message cleaner
+            if agent_config.get("cleaner", {}).get("enabled", False):
+                bearer = _extract_bearer_token(authorization) if authorization else ""
+                # Use per-request session key to avoid stale dedup cache
+                dedup_key = f"{bearer}:{model_id}:{int(time.time())}"
+                content = build_agent_content(
+                    [{"role": m.role, "content": _normalize_content(m.content)} for m in req.messages],
+                    dedup_session=dedup_key,
+                )
             else:
-                content = last_user
+                # Legacy content building (kept for backward compatibility)
+                import re as _re
+                last_user = ""
+                for m in reversed(req.messages):
+                    if m.role == "user":
+                        raw_str = m.content if isinstance(m.content, str) else str(m.content)
+                        # IMPORTANT: extract <user_query> BEFORE _clean_text() strips XML tags
+                        match = _re.search(r'<user_query>(.*?)</user_query>', raw_str, _re.DOTALL)
+                        if match:
+                            last_user = match.group(1).strip()
+                        else:
+                            raw = _normalize_content(m.content)
+                            if len(raw) > 2000:
+                                lines = raw.strip().split('\n')
+                                meaningful = []
+                                for line in reversed(lines):
+                                    line = line.strip()
+                                    if not line:
+                                        continue
+                                    if len(line) > 200 or line.startswith(('OS Version:', 'Shell:', 'Workspace:', 'Current date:', '<system-reminder', '</system-reminder>', '```')):
+                                        continue
+                                    meaningful.insert(0, line)
+                                    if len('\n'.join(meaningful)) > 500:
+                                        break
+                                last_user = '\n'.join(meaningful) if meaningful else raw[-500:]
+                            else:
+                                last_user = raw
+                        break
+                system_msgs = []
+                for m in req.messages:
+                    if m.role == "system":
+                        content_str = _normalize_content(m.content)
+                        if 'isNewTopic' in content_str or 'Generate a concise' in content_str or 'sentence-case title' in content_str or 'Respond with EXACTLY one JSON object' in content_str:
+                            continue
+                        if len(content_str) > 2000:
+                            continue
+                        system_msgs.append(content_str)
+                if system_msgs:
+                    content = "\n\n".join(system_msgs) + "\n\n" + last_user
+                else:
+                    content = last_user
+            
+            # Tool calling: inject tool prompt if tools are present
+            if not isinstance(req, SimpleChatRequest) and req.tools and agent_config.get("tools", {}).get("enabled", False):
+                tools_parsed = parse_openai_tools([t.model_dump() for t in req.tools])
+                tool_prompt = build_tool_prompt(tools_parsed)
+                if tool_prompt:
+                    content = tool_prompt + "\n\n" + content
             logger.info(f"[DEBUG] Final content ({len(content)} chars): {content[:300]}")
     except Exception as e:
         raise HTTPException(status_code=400, detail="Invalid request format")

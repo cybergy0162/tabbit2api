@@ -18,6 +18,13 @@ DEFAULT_CONFIG = {
     "proxy": {"api_key": "", "system_prompt": ""},
     "claude": {"default_model": "best", "system_prompt": ""},
     "openai": {"default_model": "best"},
+    "agent": {
+        "cleaner": {"enabled": False},
+        "context": {"enabled": False, "max_turns": 20, "threshold_ratio": 0.8},
+        "tools": {"enabled": False},
+        "router": {"enabled": False},
+        "token_pool": {"enabled": False, "cooldown_seconds": 300, "max_consecutive_errors": 3, "encryption_key": ""},
+    },
     "logging": {"max_entries": 500},
 }
 

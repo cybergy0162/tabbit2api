@@ -46,6 +46,11 @@ class SettingsUpdateRequest(BaseModel):
     claude_system_prompt: Optional[str] = None
     session_enabled: Optional[bool] = None
     session_ttl: Optional[int] = None
+    agent_cleaner: Optional[bool] = None
+    agent_context: Optional[bool] = None
+    agent_tools: Optional[bool] = None
+    agent_router: Optional[bool] = None
+    agent_token_pool: Optional[bool] = None
 
 class GoogleLoginRequest(BaseModel):
     id_token: str
@@ -261,6 +266,11 @@ def init(config: ConfigManager, token_manager: TokenManager, log_store: LogStore
                 "enabled": SESSION_ENABLED,
                 "ttl_seconds": SESSION_TTL,
             },
+            "agent": _cfg.get("agent", default={
+                "cleaner": {"enabled": False}, "context": {"enabled": False},
+                "tools": {"enabled": False}, "router": {"enabled": False},
+                "token_pool": {"enabled": False},
+            }),
             "logging": _cfg.get("logging"),
         }
 
@@ -293,6 +303,13 @@ def init(config: ConfigManager, token_manager: TokenManager, log_store: LogStore
         if req.session_ttl is not None:
             import routes.openai_compat as oc
             oc.SESSION_TTL = req.session_ttl
+        # Agent toggles
+        for key, attr in [("agent_cleaner", "cleaner"), ("agent_context", "context"),
+                          ("agent_tools", "tools"), ("agent_router", "router"),
+                          ("agent_token_pool", "token_pool")]:
+            val = getattr(req, key, None)
+            if val is not None:
+                _cfg.set_val("agent", attr, "enabled", val)
         return {"ok": True}
 
     # ── Model Update ──

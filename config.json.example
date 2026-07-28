@@ -9,7 +9,7 @@
     "jwt_secret": ""
   },
   "tabbit": {
-    "base_url": "https://web.tabbit-ai.com",
+    "base_url": "https://web.tabbit.com",
     "client_id": "2dd8eb4c1ed9c344d173"
   },
   "tokens": [
@@ -35,6 +35,33 @@
   },
   "openai": {
     "default_model": "best"
+  },
+  "agent": {
+    "cleaner": {
+      "enabled": false,
+      "comment": "Enable message cleaning: filter pseudo-requests, dedup, extract real user query"
+    },
+    "context": {
+      "enabled": false,
+      "max_turns": 20,
+      "threshold_ratio": 0.8,
+      "comment": "Enable context management: sliding window, summarization trigger"
+    },
+    "tools": {
+      "enabled": false,
+      "comment": "Enable function calling / tool use support (soft tool calling)"
+    },
+    "router": {
+      "enabled": false,
+      "comment": "Enable agent-aware model routing (X-Agent-Phase header, model suffix)"
+    },
+    "token_pool": {
+      "enabled": false,
+      "cooldown_seconds": 300,
+      "max_consecutive_errors": 3,
+      "encryption_key": "",
+      "comment": "Enhanced token pool with weighted RR, state machine, optional Fernet encryption"
+    }
   },
   "logging": {
     "max_entries": 500

@@ -108,7 +108,10 @@ else:
 @app.get("/admin")
 async def admin_page():
     if static_dir.exists() and (static_dir / "index.html").exists():
-        return FileResponse(str(static_dir / "index.html"))
+        return FileResponse(
+            str(static_dir / "index.html"),
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"},
+        )
     else:
         return {"error": "Admin panel not available", "message": "Static files not found. Please check if static directory exists."}
 

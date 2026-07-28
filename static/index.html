@@ -150,6 +150,7 @@ const navItems = [
   { id: 'tokens', label: 'Tokens', icon: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>' },
   { id: 'sessions', label: 'Sessions', icon: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>' },
   { id: 'settings', label: 'Settings', icon: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>' },
+  { id: 'agent', label: 'Agent', icon: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>' },
   { id: 'logs', label: 'Logs', icon: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>' },
 ];
 
@@ -208,6 +209,7 @@ async function loadPage() {
       case 'tokens': await renderTokens(el); break;
       case 'sessions': await renderSessions(el); break;
       case 'settings': await renderSettings(el); break;
+      case 'agent': await renderAgent(el); break;
       case 'logs': await renderLogs(el); break;
     }
   } catch (e) {
@@ -632,6 +634,95 @@ async function clearAllSessions() {
   renderSessions(document.getElementById('pageContent'));
 }
 
+// ── Agent ──
+
+async function renderAgent(el) {
+  const settings = await api('/settings');
+  const sessions = await api('/sessions');
+  const agentCfg = settings.agent || {};
+
+  el.innerHTML = `
+    <h2 class="text-2xl font-semibold mb-6">Agent 管理</h2>
+
+    <!-- 配置状态 -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+      ${[
+        { key: 'cleaner', label: '消息清洗器', desc: '过滤伪请求、去重、提取真实问题' },
+        { key: 'context', label: '上下文管理', desc: '滑动窗口、摘要触发' },
+        { key: 'tools', label: 'Tool Calling', desc: '软工具调用支持' },
+        { key: 'router', label: '模型路由', desc: 'Agent 相位感知模型选择' },
+        { key: 'token_pool', label: 'Token 池增强', desc: '加权轮询、状态机' },
+      ].map(m => `
+        <div class="rounded-xl border ${agentCfg[m.key]?.enabled ? 'border-emerald-700 bg-emerald-900/20' : 'border-zinc-800 bg-zinc-900'} p-5">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-sm font-medium text-zinc-300">${m.label}</h3>
+            <span class="rounded-full px-2 py-0.5 text-xs font-medium ${agentCfg[m.key]?.enabled ? 'bg-emerald-900/50 text-emerald-400' : 'bg-zinc-700 text-zinc-500'}">
+              ${agentCfg[m.key]?.enabled ? '启用' : '关闭'}
+            </span>
+          </div>
+          <p class="text-xs text-zinc-400">${m.desc}</p>
+        </div>
+      `).join('')}
+    </div>
+
+    <!-- 活跃会话 -->
+    <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-6">
+      <h3 class="text-sm font-medium text-zinc-300 mb-4">活跃 Agent 会话 (${sessions.total})</h3>
+      ${sessions.sessions.length === 0 ? '<p class="text-sm text-zinc-400">暂无活跃会话</p>' : `
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead><tr class="text-zinc-400 text-left border-b border-zinc-800">
+              <th class="px-4 py-2 font-medium">模型</th>
+              <th class="px-4 py-2 font-medium">Session ID</th>
+              <th class="px-4 py-2 font-medium">类型</th>
+              <th class="px-4 py-2 font-medium">请求次数</th>
+              <th class="px-4 py-2 font-medium">状态</th>
+            </tr></thead>
+            <tbody>
+              ${sessions.sessions.slice(0, 10).map(s => `<tr class="border-b border-zinc-800/50">
+                <td class="px-4 py-2 font-medium">${esc(s.model_id)}</td>
+                <td class="px-4 py-2 font-mono text-xs text-zinc-400">${esc(s.session_id.substring(0,16))}...</td>
+                <td class="px-4 py-2 text-xs">${s.fixed ? '📌 固定' : (s.use_v3 ? 'V3' : 'V1')}</td>
+                <td class="px-4 py-2">${s.request_count}</td>
+                <td class="px-4 py-2"><span class="rounded-full px-2 py-0.5 text-xs ${s.ttl_remaining > 0 ? 'bg-emerald-900/50 text-emerald-400' : 'bg-zinc-700 text-zinc-500'}">${s.fixed ? '永久' : s.ttl_remaining > 0 ? '活跃' : '过期'}</span></td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      `}
+    </div>
+
+    <!-- 配置提示 -->
+    <div class="mt-4 rounded-xl border border-zinc-800 bg-zinc-900 p-4 text-xs text-zinc-400">
+      <p class="font-medium text-zinc-300 mb-1">Agent 功能说明</p>
+      <ul class="space-y-1 list-disc list-inside">
+        <li>所有 Agent 功能默认关闭，在 Settings 页面直接开启/关闭，即时生效</li>
+        <li>Tool Calling 为软工具调用：模型输出 tool_use，网关返回 tool_call chunk，等待客户端 tool_result 后继续</li>
+        <li>模型路由支持 X-Agent-Phase 请求头（reasoning/summary/tool）和模型 ID 后缀（*-reasoning）</li>
+        <li>Token 池增强支持加权轮询和 Fernet 加密（需设置 AGENT_ENCRYPTION_KEY 环境变量）</li>
+      </ul>
+    </div>`;
+}
+
+// ── Agent toggle ──
+
+async function toggleAgentSwitch(btn, key) {
+  const current = btn.dataset.enabled === 'true';
+  const newVal = !current;
+  try {
+    await api('/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ [key]: newVal })
+    });
+    btn.dataset.enabled = newVal.toString();
+    btn.textContent = newVal ? '启用中' : '已关闭';
+    btn.className = 'rounded-lg px-4 py-2 text-sm font-medium transition-colors ' + 
+      (newVal ? 'bg-emerald-600 text-white hover:bg-emerald-500' : 'bg-zinc-700 text-zinc-400 hover:bg-zinc-600');
+  } catch (e) {
+    alert('切换失败: ' + e.message);
+  }
+}
+
 // ── Settings ──
 
 async function renderSettings(el) {
@@ -752,6 +843,31 @@ async function renderSettings(el) {
             <p class="text-xs text-zinc-500 mt-1">超时后自动创建新会话，默认604800秒（7天），可设为极大值实现永久</p>
           </div>
         </div>
+      </div>
+      <!-- Agent Features -->
+      <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-6">
+        <h3 class="text-sm font-medium text-zinc-300 mb-4">Agent 功能</h3>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          ${[
+            {key:'agent_cleaner', id:'sCleaner', label:'消息清洗器', desc:'过滤伪请求、去重、提取真实问题', val: s.agent?.cleaner?.enabled},
+            {key:'agent_context', id:'sContext', label:'上下文管理', desc:'滑动窗口、摘要触发', val: s.agent?.context?.enabled},
+            {key:'agent_tools', id:'sTools', label:'Tool Calling', desc:'软工具调用支持', val: s.agent?.tools?.enabled},
+            {key:'agent_router', id:'sRouter', label:'模型路由', desc:'Agent 相位感知模型选择', val: s.agent?.router?.enabled},
+            {key:'agent_token_pool', id:'sTokenPool', label:'Token池增强', desc:'加权轮询、状态机、加密', val: s.agent?.token_pool?.enabled},
+          ].map(m => `
+            <div class="flex items-center justify-between rounded-lg bg-zinc-800/50 px-4 py-3">
+              <div>
+                <span class="text-sm text-zinc-300">${m.label}</span>
+                <p class="text-xs text-zinc-500 mt-0.5">${m.desc}</p>
+              </div>
+              <button id="${m.id}" data-enabled="${m.val ? 'true' : 'false'}" onclick="toggleAgentSwitch(this, '${m.key}')"
+                class="rounded-lg px-4 py-2 text-sm font-medium transition-colors ${m.val ? 'bg-emerald-600 text-white hover:bg-emerald-500' : 'bg-zinc-700 text-zinc-400 hover:bg-zinc-600'}">
+                ${m.val ? '启用中' : '已关闭'}
+              </button>
+            </div>
+          `).join('')}
+        </div>
+        <p class="text-xs text-zinc-500 mt-3">点击按钮切换，即时生效</p>
       </div>
       <!-- Logging -->
       <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-6">
