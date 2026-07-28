@@ -33,6 +33,9 @@
     "default_model": "best",
     "system_prompt": ""
   },
+  "openai": {
+    "default_model": "best"
+  },
   "logging": {
     "max_entries": 500
   }

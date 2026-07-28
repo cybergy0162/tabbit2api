@@ -146,6 +146,7 @@ function bindLogin() {
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/>' },
   { id: 'tokens', label: 'Tokens', icon: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>' },
+  { id: 'sessions', label: 'Sessions', icon: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>' },
   { id: 'settings', label: 'Settings', icon: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>' },
   { id: 'logs', label: 'Logs', icon: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>' },
 ];
@@ -203,6 +204,7 @@ async function loadPage() {
     switch (currentPage) {
       case 'dashboard': await renderDashboard(el); break;
       case 'tokens': await renderTokens(el); break;
+      case 'sessions': await renderSessions(el); break;
       case 'settings': await renderSettings(el); break;
       case 'logs': await renderLogs(el); break;
     }
@@ -503,6 +505,77 @@ async function deleteToken(id, name) {
   renderTokens(document.getElementById('pageContent'));
 }
 
+// ── Sessions ──
+
+async function renderSessions(el) {
+  const data = await api('/sessions');
+  el.innerHTML = `
+    <div class="flex items-center justify-between mb-6">
+      <h2 class="text-2xl font-semibold">Sessions <span class="text-sm font-normal text-zinc-400 ml-2">(${data.total} 个活跃)</span></h2>
+      ${data.total > 0 ? `
+      <button onclick="clearAllSessions()" class="rounded-lg border border-red-800 px-4 py-2 text-sm text-red-400 hover:bg-red-900/30 transition-colors">
+        清除全部会话
+      </button>` : ''}
+    </div>
+    ${data.total === 0 ? `
+    <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-12 text-center">
+      <p class="text-zinc-400">暂无活跃会话</p>
+      <p class="text-xs text-zinc-500 mt-1">API 请求发起后，会话将自动创建并显示在此处</p>
+    </div>` : `
+    <div class="rounded-xl border border-zinc-800 bg-zinc-900">
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead><tr class="text-zinc-400 text-left border-b border-zinc-800">
+            <th class="px-5 py-3 font-medium">API Key</th>
+            <th class="px-5 py-3 font-medium">模型</th>
+            <th class="px-5 py-3 font-medium">Session ID</th>
+            <th class="px-5 py-3 font-medium">API 类型</th>
+            <th class="px-5 py-3 font-medium">请求次数</th>
+            <th class="px-5 py-3 font-medium">剩余 TTL</th>
+            <th class="px-5 py-3 font-medium">最后使用</th>
+            <th class="px-5 py-3 font-medium text-right">操作</th>
+          </tr></thead>
+          <tbody>
+            ${data.sessions.map(s => `<tr class="border-b border-zinc-800/50 hover:bg-zinc-800/30">
+              <td class="px-5 py-3 font-mono text-xs">${esc(s.api_key_preview)}</td>
+              <td class="px-5 py-3 font-medium">${esc(s.model_id)}</td>
+              <td class="px-5 py-3 font-mono text-xs text-zinc-400">${esc(s.session_id.substring(0,12))}...</td>
+              <td class="px-5 py-3"><span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${s.use_v3 ? 'bg-purple-900/50 text-purple-400' : 'bg-blue-900/50 text-blue-400'}">${s.use_v3 ? 'V3' : 'V1'}</span></td>
+              <td class="px-5 py-3">${s.request_count}</td>
+              <td class="px-5 py-3 text-zinc-400">${Math.floor(s.ttl_remaining/60)}分${s.ttl_remaining%60}秒</td>
+              <td class="px-5 py-3 text-zinc-400 text-xs">${fmtTime(new Date(s.last_used*1000).toISOString())}</td>
+              <td class="px-5 py-3 text-right">
+                <button onclick="deleteSession('${esc(s.cache_key)}')" class="inline-flex items-center rounded-md bg-zinc-800 px-2.5 py-1.5 text-xs hover:bg-red-900/50 text-red-400 transition-colors" title="删除会话">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                </button>
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`}
+    <div class="mt-4 rounded-xl border border-zinc-800 bg-zinc-900 p-4 text-xs text-zinc-400">
+      <p class="font-medium text-zinc-300 mb-1">会话缓存说明</p>
+      <ul class="space-y-1 list-disc list-inside">
+        <li>同一 API Key + 同一模型共享一个 Tabbit 会话，保持对话记忆</li>
+        <li>会话在 TTL（${Math.floor(data.ttl_seconds/60)}分钟）后自动过期，下次请求会创建新会话</li>
+        <li>${data.enabled ? '<span class="text-emerald-400">缓存已启用</span>' : '<span class="text-red-400">缓存已禁用</span>'} — 可在 Settings 中配置</li>
+      </ul>
+    </div>`;
+}
+
+async function deleteSession(key) {
+  if (!confirm('确定删除此会话？下次请求将创建新的 Tabbit 对话。')) return;
+  await api(`/sessions/${encodeURIComponent(key)}`, { method: 'DELETE' });
+  renderSessions(document.getElementById('pageContent'));
+}
+
+async function clearAllSessions() {
+  if (!confirm('确定清除所有会话？所有进行中的对话将丢失。')) return;
+  await api('/sessions/clear', { method: 'POST' });
+  renderSessions(document.getElementById('pageContent'));
+}
+
 // ── Settings ──
 
 async function renderSettings(el) {
@@ -552,16 +625,40 @@ async function renderSettings(el) {
         <div class="max-w-xs mb-4">
           <label class="block text-sm text-zinc-400 mb-1.5">默认 Tabbit 模型</label>
           <select id="sClaudeModel" class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100">
-            ${['best','deepseek-v4-pro','deepseek-v4-flash','kimi-k2.6','glm-5.1','glm-5v-turbo','deepseek-v3.2','minimax-m2.7','doubao-seed-1.8','kimi-k2.5','qwen3.5-plus','longcat-flash-chat','longcat-flash-thinking'].map(m =>
+            ${MODEL_OPTIONS.map(m =>
               '<option value="' + m + '"' + (s.claude?.default_model === m ? ' selected' : '') + '>' + m + '</option>'
             ).join('')}
           </select>
+        </div>
+        <div class="mb-4">
+          <button onclick="testModelUpdate()" id="btnTestModels" class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 transition-colors">
+            🧪 测试模型更新
+          </button>
+          <div id="modelTestResult" class="mt-3 text-sm hidden"></div>
         </div>
         <div class="rounded-lg bg-zinc-800/50 border border-zinc-700/50 p-4">
           <p class="text-xs text-zinc-400 mb-2 font-medium">Claude Code 连接配置</p>
           <code class="block text-xs text-emerald-400 bg-zinc-900 rounded-md p-3 whitespace-pre">ANTHROPIC_BASE_URL=http://localhost:${s.server.port}
 ANTHROPIC_API_KEY=${s.proxy.api_key || 'any-key-here'}</code>
           <p class="text-xs text-zinc-500 mt-2">支持 /v1/messages 端点，兼容工具调用和 thinking 模式</p>
+        </div>
+      </div>
+      <!-- OpenAI -->
+      <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-6">
+        <h3 class="text-sm font-medium text-zinc-300 mb-4">OpenAI 配置</h3>
+        <div class="max-w-xs">
+          <label class="block text-sm text-zinc-400 mb-1.5">默认模型 (/v1/chat/completions)</label>
+          <select id="sOpenaiModel" class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100">
+            ${MODEL_OPTIONS.map(m =>
+              '<option value="' + m + '"' + (s.openai?.default_model === m ? ' selected' : '') + '>' + m + '</option>'
+            ).join('')}
+          </select>
+          <p class="text-xs text-zinc-500 mt-1.5">客户端未指定 model 参数时使用的默认模型</p>
+        </div>
+        <div class="rounded-lg bg-zinc-800/50 border border-zinc-700/50 p-4 mt-4">
+          <p class="text-xs text-zinc-400 mb-2 font-medium">OpenAI 兼容连接配置</p>
+          <code class="block text-xs text-emerald-400 bg-zinc-900 rounded-md p-3 whitespace-pre">OPENAI_BASE_URL=http://localhost:${s.server.port}/v1
+OPENAI_API_KEY=${s.proxy.api_key || 'any-key-here'}</code>
         </div>
       </div>
       <!-- System Prompt Injection -->
@@ -575,6 +672,24 @@ ANTHROPIC_API_KEY=${s.proxy.api_key || 'any-key-here'}</code>
           <div>
             <label class="block text-sm text-zinc-400 mb-1.5">Claude 系统提示词 (/v1/messages)</label>
             <textarea id="sClaudePrompt" rows="3" placeholder="留空则不注入" class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 resize-y">${esc(s.claude?.system_prompt || '')}</textarea>
+          </div>
+        </div>
+      </div>
+      <!-- Session Cache -->
+      <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-6">
+        <h3 class="text-sm font-medium text-zinc-300 mb-4">会话缓存</h3>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm text-zinc-400 mb-1.5">启用缓存</label>
+            <select id="sSessionEnabled" class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100">
+              <option value="true" ${s.session?.enabled ? 'selected' : ''}>启用 — 同一客户端共享会话记忆</option>
+              <option value="false" ${!s.session?.enabled ? 'selected' : ''}>禁用 — 每次请求创建新对话</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm text-zinc-400 mb-1.5">TTL（秒）</label>
+            <input id="sSessionTTL" type="number" value="${s.session?.ttl_seconds || 1800}" min="60" step="60" class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100">
+            <p class="text-xs text-zinc-500 mt-1">超时后自动创建新会话，默认1800秒（30分钟）</p>
           </div>
         </div>
       </div>
@@ -608,6 +723,88 @@ ANTHROPIC_API_KEY=${s.proxy.api_key || 'any-key-here'}</code>
     </div>`;
 }
 
+async function testModelUpdate() {
+  const btn = document.getElementById('btnTestModels');
+  const resultDiv = document.getElementById('modelTestResult');
+  
+  btn.disabled = true;
+  btn.textContent = '⏳ 测试中...';
+  resultDiv.classList.remove('hidden');
+  resultDiv.innerHTML = '<div class="text-zinc-400">正在从 Tabbit API 获取最新模型列表...</div>';
+  
+  try {
+    const response = await api('/test-models', {
+      method: 'POST',
+      body: JSON.stringify({})
+    });
+    
+    if (response.ok) {
+      resultDiv.innerHTML = `
+        <div class="p-3 rounded-lg bg-emerald-900/30 border border-emerald-700/50">
+          <div class="text-emerald-400 font-medium mb-1">✅ ${response.message}</div>
+          <div class="text-xs text-zinc-400 mt-1">
+            新增: ${response.new_models_count} 个模型 | 总计: ${response.total_models_count} 个模型
+          </div>
+        </div>
+      `;
+      
+      // Show new models if available
+      if (response.new_models && Object.keys(response.new_models).length > 0) {
+        const modelsHtml = Object.entries(response.new_models).map(([id, name]) => 
+          `<div class="text-xs text-zinc-300">• ${id}: ${name || id}</div>`
+        ).join('');
+        
+        resultDiv.innerHTML += `
+          <div class="mt-2 p-2 rounded bg-zinc-800/50 border border-zinc-700/50">
+            <div class="text-xs text-zinc-400 mb-1">新增模型（前20个）:</div>
+            ${modelsHtml}
+          </div>
+        `;
+      }
+      
+      // Update the model dropdown with new models
+      const selectEl = document.getElementById('sClaudeModel');
+      if (selectEl && response.new_models) {
+        // Clear existing options
+        selectEl.innerHTML = '';
+        
+        // Add all models from the updated MODEL_MAP
+        const allModels = Object.keys(response.new_models);
+        allModels.forEach(modelId => {
+          const option = document.createElement('option');
+          option.value = modelId;
+          option.textContent = modelId;
+          selectEl.appendChild(option);
+        });
+        
+        // Restore selected value if it exists
+        if (response.current_model && allModels.includes(response.current_model)) {
+          selectEl.value = response.current_model;
+        }
+      }
+    } else {
+      resultDiv.innerHTML = `
+        <div class="p-3 rounded-lg bg-red-900/30 border border-red-700/50">
+          <div class="text-red-400 font-medium mb-1">❌ 测试失败</div>
+          <div class="text-xs text-zinc-400">${response.error}</div>
+        </div>
+      `;
+    }
+  } catch (e) {
+    resultDiv.innerHTML = `
+      <div class="p-3 rounded-lg bg-red-900/30 border border-red-700/50">
+        <div class="text-red-400 font-medium mb-1">❌ 请求失败</div>
+        <div class="text-xs text-zinc-400">${e.message}</div>
+      </div>
+    `;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🧪 测试模型更新';
+  }
+}
+
+const MODEL_OPTIONS = ['best','kimi-k3','longcat-2-0','glm-5-2','qwen3-7-max','kimi-k2-7-code','deepseek-v4-pro','deepseek-v4-flash','doubao-seed-2-1-pro','doubao-seed-2-1-turbo','minimax-m3','glm-5-1','glm-5v-turbo','kimi-k2-6','kimi-k2-5','minimax-m2-7','doubao-seed-2-0-lite','qwen3-5-plus','longcat-flash-chat','longcat-flash-thinking'];
+
 async function saveSettings() {
   try {
     await api('/settings', {
@@ -619,9 +816,12 @@ async function saveSettings() {
         client_id: document.getElementById('sClientId').value,
         api_key: document.getElementById('sApiKey').value,
         claude_default_model: document.getElementById('sClaudeModel').value,
+        openai_default_model: document.getElementById('sOpenaiModel').value,
         openai_system_prompt: document.getElementById('sOpenaiPrompt').value,
         claude_system_prompt: document.getElementById('sClaudePrompt').value,
         max_entries: parseInt(document.getElementById('sMaxEntries').value),
+        session_enabled: document.getElementById('sSessionEnabled').value === 'true',
+        session_ttl: parseInt(document.getElementById('sSessionTTL').value) || 1800,
       })
     });
     alert('设置已保存（端口变更需重启生效）');

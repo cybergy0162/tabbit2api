@@ -21,3 +21,8 @@ logs/
 .coverage
 htmlcov/
 .pytest_cache/
+*.xlsx
+*.bak
+error_log*.txt
+tabb2-main.zip
+fetched_models.json

@@ -34,14 +34,21 @@ _cfg: ConfigManager | None = None
 _logs: LogStore | None = None
 _fallback_clients: dict[str, TabbitClient] = {}
 
+# Session cache for Claude API
+_claude_session_cache: dict[str, dict] = {}
+CLAUDE_SESSION_TTL = 1800  # 30 minutes
+
 # Claude 模型名 → Tabbit 模型名映射
 CLAUDE_MODEL_MAP = {
-    "claude-opus-4-6": "best",
-    "claude-sonnet-4-6": "best",
-    "claude-sonnet-4-5": "best",
-    "claude-haiku-4-5": "best",
-    "claude-3-5-sonnet": "best",
-    "claude-3-5-haiku": "best",
+    "claude-opus-4-6": "kimi-k3",
+    "claude-opus-4-5": "kimi-k3",
+    "claude-opus-4-1": "kimi-k3",
+    "claude-sonnet-4-6": "deepseek-v4-pro",
+    "claude-sonnet-4-5": "deepseek-v4-pro",
+    "claude-sonnet-4-1": "deepseek-v4-pro",
+    "claude-haiku-4-5": "doubao-seed-2-1-turbo",
+    "claude-3-5-sonnet": "qwen3-7-max",
+    "claude-3-5-haiku": "doubao-seed-2-1-turbo",
 }
 
 
@@ -52,20 +59,20 @@ def init(token_manager: TokenManager, config: ConfigManager, log_store: LogStore
     _logs = log_store
 
 
-def _resolve_tabbit_model(model: str) -> str:
-    """将请求中的模型名映射到 Tabbit 模型"""
+def _resolve_tabbit_model(model: str) -> tuple[str, str]:
+    """将请求中的模型名映射到 (model_id, display_name)"""
     # 精确匹配
     if model in MODEL_MAP:
-        return MODEL_MAP[model]
+        return model, MODEL_MAP[model]
     # Claude 模型名映射
     for prefix, target in CLAUDE_MODEL_MAP.items():
         if model.startswith(prefix):
-            return MODEL_MAP.get(target, "最佳")
+            return target, MODEL_MAP.get(target, "最佳")
     # 从 config 中读取默认模型
     default = _cfg.get("claude", "default_model") if _cfg else None
     if default and default in MODEL_MAP:
-        return MODEL_MAP[default]
-    return "最佳"
+        return default, MODEL_MAP[default]
+    return "best", "最佳"
 
 
 async def _get_client_and_token(
@@ -141,6 +148,7 @@ async def _stream_claude_response(
     body: dict,
     token_name: str,
     token_id: str,
+    use_v3: bool = False,
 ):
     """流式生成 Claude SSE 响应"""
     request_id = uuid.uuid4().hex[:12]
@@ -167,9 +175,14 @@ async def _stream_claude_response(
     error_msg = ""
 
     try:
-        async for event in client.send_message(session_id, content, tabbit_model):
+        event_gen = client.send_message_v3(session_id, content, tabbit_model) if use_v3 else client.send_message(session_id, content, tabbit_model)
+        async for event in event_gen:
             et = event["event"]
             ed = event["data"]
+
+            if et == "error":
+                error_msg = ed.get("message", str(ed))
+                break
 
             if et == "message_chunk" and "content" in ed:
                 text = ed["content"]
@@ -229,7 +242,30 @@ async def claude_messages(request: Request):
     client, token_name, token_id = await _get_client_and_token(request)
 
     # 模型映射
-    tabbit_model = _resolve_tabbit_model(body.get("model", "best"))
+    model_id, tabbit_model = _resolve_tabbit_model(body.get("model", "best"))
+
+    # Check if premium model
+    from routes.openai_compat import _is_premium_model
+    use_v3 = _is_premium_model(model_id)
+
+    # Session cache: get bearer for cache key
+    auth_header = request.headers.get("x-api-key") or request.headers.get("authorization", "")
+    bearer = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else auth_header
+    cache_key = f"{bearer}:{model_id}"
+    cached = _claude_session_cache.get(cache_key)
+    
+    if cached and time.time() - cached["created_at"] < CLAUDE_SESSION_TTL:
+        session_id = cached["session_id"]
+        logger.info(f"Claude reusing cached session {session_id}")
+    else:
+        try:
+            session_id = await client.create_chat_session()
+            _claude_session_cache[cache_key] = {"session_id": session_id, "created_at": time.time()}
+            logger.info(f"Claude created new session {session_id}")
+        except Exception as e:
+            if token_id and _tm:
+                _tm.report_error(token_id)
+            raise HTTPException(status_code=502, detail=f"Session creation failed: {e}")
 
     # 工具调用准备
     tools = body.get("tools", [])
@@ -244,30 +280,12 @@ async def claude_messages(request: Request):
     # 构建发送内容
     content = map_claude_to_content(body, trigger_signal)
 
-    # 创建聊天会话
-    try:
-        session_id = await client.create_chat_session()
-    except Exception as e:
-        if token_id and _tm:
-            _tm.report_error(token_id)
-        if _logs:
-            _logs.add(
-                LogEntry(
-                    model=body.get("model", "unknown"),
-                    token_name=token_name,
-                    stream=True,
-                    status="error",
-                    error=str(e),
-                )
-            )
-        raise HTTPException(status_code=502, detail=str(e))
-
     # Claude Code 总是 stream
     is_stream = body.get("stream", True)
     if is_stream:
         return StreamingResponse(
             _stream_claude_response(
-                client, session_id, content, tabbit_model, body, token_name, token_id
+                client, session_id, content, tabbit_model, body, token_name, token_id, use_v3=use_v3
             ),
             media_type="text/event-stream",
             headers={
@@ -285,10 +303,19 @@ async def claude_messages(request: Request):
     error_msg = ""
 
     try:
-        async for event in client.send_message(session_id, content, tabbit_model):
-            if event["event"] == "message_chunk":
-                full_text += event["data"].get("content", "")
-        if token_id and _tm:
+        if use_v3:
+            async for event in client.send_message_v3(session_id, content, tabbit_model):
+                et, ed = event["event"], event["data"]
+                if et == "error":
+                    error_msg = ed.get("message", str(ed))
+                    break
+                if et == "message_chunk" and "content" in ed:
+                    full_text += ed["content"]
+        else:
+            async for event in client.send_message(session_id, content, tabbit_model):
+                if event["event"] == "message_chunk":
+                    full_text += event["data"].get("content", "")
+        if token_id and _tm and not error_msg:
             _tm.report_success(token_id)
     except Exception as e:
         error_msg = str(e)

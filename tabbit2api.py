@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 from contextlib import asynccontextmanager
 
+import asyncio
 import uvicorn
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -12,6 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from core.config import ConfigManager
 from core.token_manager import TokenManager
 from core.log_store import LogStore
+import core.tabbit_client as tabbit_client
+from core.tabbit_client import fetch_model_map, update_model_map, MODEL_MAP
 from routes import openai_compat, admin_api, claude_api
 
 logging.basicConfig(
@@ -37,7 +40,43 @@ async def lifespan(app: FastAPI):
         len(cfg.get("tokens", default=[])),
         cfg.get("server", "port", default=8800),
     )
+    
+    # 启动时立即更新模型列表
+    try:
+        tokens = cfg.get("tokens", default=[])
+        if tokens:
+            token_str = tokens[0].get("value", "")
+            if token_str:
+                new_models = await fetch_model_map(token_str)
+                if new_models:
+                    tabbit_client.MODEL_MAP.clear()
+                    tabbit_client.MODEL_MAP.update(new_models)
+                    logger.info(f"Updated model map with {len(new_models)} models from Tabbit API on startup")
+    except Exception as e:
+        logger.error(f"Failed to update model map on startup: {e}")
+    
+    # 后台任务：定期更新模型列表
+    async def update_models_periodically():
+        while True:
+            try:
+                tokens = cfg.get("tokens", default=[])
+                if tokens:
+                    token_str = tokens[0].get("value", "")
+                    if token_str:
+                        new_models = await fetch_model_map(token_str)
+                        if new_models:
+                            tabbit_client.MODEL_MAP.clear()
+                            tabbit_client.MODEL_MAP.update(new_models)
+                            logger.info(f"Updated model map with {len(new_models)} models from Tabbit API")
+            except Exception as e:
+                logger.error(f"Failed to update model map: {e}")
+            await asyncio.sleep(3600)  # 每小时更新一次
+    
+    task = asyncio.create_task(update_models_periodically())
+    
     yield
+    
+    task.cancel()
     await token_manager.close_all()
 
 

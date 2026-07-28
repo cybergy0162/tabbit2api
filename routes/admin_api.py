@@ -41,8 +41,11 @@ class SettingsUpdateRequest(BaseModel):
     api_key: Optional[str] = None
     max_entries: Optional[int] = None
     claude_default_model: Optional[str] = None
+    openai_default_model: Optional[str] = None
     openai_system_prompt: Optional[str] = None
     claude_system_prompt: Optional[str] = None
+    session_enabled: Optional[bool] = None
+    session_ttl: Optional[int] = None
 
 class GoogleLoginRequest(BaseModel):
     id_token: str
@@ -244,6 +247,7 @@ def init(config: ConfigManager, token_manager: TokenManager, log_store: LogStore
 
     @r.get("/settings", dependencies=[Depends(admin_dep)])
     async def get_settings():
+        from routes.openai_compat import SESSION_TTL, SESSION_ENABLED
         return {
             "server": _cfg.get("server"),
             "tabbit": _cfg.get("tabbit"),
@@ -252,6 +256,11 @@ def init(config: ConfigManager, token_manager: TokenManager, log_store: LogStore
                 "system_prompt": _cfg.get("proxy", "system_prompt", default=""),
             },
             "claude": _cfg.get("claude", default={"default_model": "best", "system_prompt": ""}),
+            "openai": _cfg.get("openai", default={"default_model": "best"}),
+            "session": {
+                "enabled": SESSION_ENABLED,
+                "ttl_seconds": SESSION_TTL,
+            },
             "logging": _cfg.get("logging"),
         }
 
@@ -269,6 +278,8 @@ def init(config: ConfigManager, token_manager: TokenManager, log_store: LogStore
             _cfg.set_val("proxy", "api_key", req.api_key)
         if req.claude_default_model is not None:
             _cfg.set_val("claude", "default_model", req.claude_default_model)
+        if req.openai_default_model is not None:
+            _cfg.set_val("openai", "default_model", req.openai_default_model)
         if req.openai_system_prompt is not None:
             _cfg.set_val("proxy", "system_prompt", req.openai_system_prompt)
         if req.claude_system_prompt is not None:
@@ -276,7 +287,56 @@ def init(config: ConfigManager, token_manager: TokenManager, log_store: LogStore
         if req.max_entries is not None:
             _cfg.set_val("logging", "max_entries", req.max_entries)
             _logs.resize(req.max_entries)
+        if req.session_enabled is not None:
+            import routes.openai_compat as oc
+            oc.SESSION_ENABLED = req.session_enabled
+        if req.session_ttl is not None:
+            import routes.openai_compat as oc
+            oc.SESSION_TTL = req.session_ttl
         return {"ok": True}
+
+    # ── Model Update ──
+
+    @r.post("/test-models", dependencies=[Depends(admin_dep)])
+    async def test_model_update():
+        try:
+            tokens = _cfg.get("tokens", default=[])
+            if not tokens:
+                return {"ok": False, "error": "No tokens configured"}
+            
+            token_str = tokens[0].get("value", "")
+            if not token_str:
+                return {"ok": False, "error": "Token value is empty"}
+            
+            # Import here to avoid circular imports
+            from core.tabbit_client import fetch_model_map, update_model_map
+            
+            # Fetch models from Tabbit API
+            new_models = await fetch_model_map(token_str)
+            
+            if not new_models:
+                return {"ok": False, "error": "Failed to fetch models from Tabbit API"}
+            
+            # Update the global model map
+            update_model_map(new_models)
+            
+            # Get current model count
+            from core.tabbit_client import MODEL_MAP
+            total_count = len(MODEL_MAP)
+            new_count = len(new_models)
+            
+            return {
+                "ok": True,
+                "message": f"Successfully updated {new_count} models from Tabbit API",
+                "new_models_count": new_count,
+                "total_models_count": total_count,
+                "current_model": _cfg.get("claude", "default_model", default="best"),
+                "new_models": dict(list(new_models.items())[:20])  # Return first 20 for display
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to test model update: {e}", exc_info=True)
+            return {"ok": False, "error": str(e)}
 
     # ── Password ──
 
@@ -287,6 +347,33 @@ def init(config: ConfigManager, token_manager: TokenManager, log_store: LogStore
         pw_hash, salt = hash_password(req.new_password)
         _cfg.set_val("admin", "password_hash", pw_hash)
         _cfg.set_val("admin", "salt", salt)
+        return {"ok": True}
+
+    # ── Sessions ──
+
+    @r.get("/sessions", dependencies=[Depends(admin_dep)])
+    async def get_sessions():
+        from routes.openai_compat import get_session_list, SESSION_TTL, SESSION_ENABLED
+        sessions = get_session_list()
+        return {
+            "sessions": sessions,
+            "total": len(sessions),
+            "ttl_seconds": SESSION_TTL,
+            "enabled": SESSION_ENABLED,
+        }
+
+    @r.delete("/sessions/{cache_key}", dependencies=[Depends(admin_dep)])
+    async def delete_session_endpoint(cache_key: str):
+        from routes.openai_compat import delete_session
+        ok = delete_session(cache_key)
+        if not ok:
+            raise HTTPException(status_code=404, detail="session not found")
+        return {"ok": True}
+
+    @r.post("/sessions/clear", dependencies=[Depends(admin_dep)])
+    async def clear_sessions():
+        from routes.openai_compat import clear_all_sessions
+        clear_all_sessions()
         return {"ok": True}
 
     # ── Logs ──

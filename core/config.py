@@ -11,12 +11,13 @@ DEFAULT_CONFIG = {
     "server": {"host": "0.0.0.0", "port": 8800},
     "admin": {"password_hash": "", "salt": "", "jwt_secret": ""},
     "tabbit": {
-        "base_url": "https://web.tabbit-ai.com",
+        "base_url": "https://web.tabbit.com",
         "client_id": "2dd8eb4c1ed9c344d173",
     },
     "tokens": [],
     "proxy": {"api_key": "", "system_prompt": ""},
     "claude": {"default_model": "best", "system_prompt": ""},
+    "openai": {"default_model": "best"},
     "logging": {"max_entries": 500},
 }
 
@@ -29,6 +30,7 @@ ENV_VAR_MAP = {
     "TABBIT_SYSTEM_PROMPT": ("proxy", "system_prompt"),
     "TABBIT_CLAUDE_DEFAULT_MODEL": ("claude", "default_model"),
     "TABBIT_CLAUDE_SYSTEM_PROMPT": ("claude", "system_prompt"),
+    "TABBIT_OPENAI_DEFAULT_MODEL": ("openai", "default_model"),
 }
 
 
