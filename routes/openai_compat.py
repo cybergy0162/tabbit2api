@@ -672,6 +672,7 @@ async def list_models():
             "max_tokens": info.get("max_tokens", 128000),
             "supports_streaming": info.get("supports_streaming", True),
             "supports_vision": info.get("supports_vision", True),
+            "access_type": info.get("access_type", "free_metered"),
         })
     return {
         "object": "list",

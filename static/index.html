@@ -50,6 +50,8 @@ tailwind.config = {
 const API = '/api/admin';
 let token = localStorage.getItem('admin_token') || '';
 let currentPage = 'dashboard';
+let _cachedModels = [];
+let _selectedModel = 'best';
 let autoRefreshTimer = null;
 
 // ── Fetch helpers ──
@@ -158,7 +160,7 @@ function layout() {
     <aside class="w-56 border-r border-zinc-800 bg-zinc-950 flex flex-col fixed h-screen">
       <div class="p-5 border-b border-zinc-800">
         <h1 class="text-base font-semibold tracking-tight">Tabbit2API</h1>
-        <p class="text-xs text-zinc-500 mt-0.5">管理面板</p>
+        <p class="text-xs text-zinc-500 mt-0.5">管理面板 <span class="text-emerald-500">v2.0</span></p>
       </div>
       <nav class="flex-1 p-3 space-y-1" id="navList">
         ${navItems.map(n => `
@@ -619,46 +621,50 @@ async function renderSettings(el) {
           <input id="sApiKey" type="text" value="${esc(s.proxy.api_key)}" placeholder="sk-..." class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500">
         </div>
       </div>
-      <!-- Claude -->
+      <!-- 模型管理 -->
       <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-6">
-        <h3 class="text-sm font-medium text-zinc-300 mb-4">Claude Code 配置</h3>
-        <div class="max-w-xs mb-4">
-          <label class="block text-sm text-zinc-400 mb-1.5">默认 Tabbit 模型</label>
-          <select id="sClaudeModel" class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100">
-            ${MODEL_OPTIONS.map(m =>
-              '<option value="' + m + '"' + (s.claude?.default_model === m ? ' selected' : '') + '>' + m + '</option>'
-            ).join('')}
-          </select>
-        </div>
-        <div class="mb-4">
+        <h3 class="text-sm font-medium text-zinc-300 mb-4">模型管理</h3>
+        <div class="flex items-center gap-4 mb-4">
           <button onclick="testModelUpdate()" id="btnTestModels" class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 transition-colors">
             🧪 测试模型更新
           </button>
-          <div id="modelTestResult" class="mt-3 text-sm hidden"></div>
+          <span id="modelTestResult" class="text-sm hidden"></span>
         </div>
-        <div class="rounded-lg bg-zinc-800/50 border border-zinc-700/50 p-4">
-          <p class="text-xs text-zinc-400 mb-2 font-medium">Claude Code 连接配置</p>
-          <code class="block text-xs text-emerald-400 bg-zinc-900 rounded-md p-3 whitespace-pre">ANTHROPIC_BASE_URL=http://localhost:${s.server.port}
-ANTHROPIC_API_KEY=${s.proxy.api_key || 'any-key-here'}</code>
-          <p class="text-xs text-zinc-500 mt-2">支持 /v1/messages 端点，兼容工具调用和 thinking 模式</p>
+        <!-- 模型列表：持久化，切换模块不消失 -->
+        <div id="modelListContainer" class="${_cachedModels.length > 0 ? '' : 'hidden'}">
+          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2" id="modelListGrid">
+            ${_cachedModels.length > 0 ? _cachedModels.map(m => `
+              <button data-model="${esc(m.id)}" onclick="selectModelFromGrid('${esc(m.id)}')"
+                class="flex items-center gap-2 rounded-lg border ${m.id === _selectedModel ? 'border-emerald-500 bg-zinc-700' : 'border-zinc-700 bg-zinc-800'} px-3 py-2 text-sm text-zinc-300 hover:border-zinc-500 hover:bg-zinc-700 transition-all text-left">
+                <span class="text-xs w-4 text-center">${m.supports_vision ? '👁' : '💬'}</span>
+                <span class="truncate">${esc(m.name || m.id)}</span>
+                ${m.access_type === 'premium_only' ? '<span class="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] bg-amber-900/50 text-amber-400 font-medium">PRO</span>' : ''}
+              </button>
+            `).join('') : ''}
+          </div>
+          <p class="text-xs text-zinc-500 mt-3">点击模型查看对应的连接配置</p>
         </div>
       </div>
-      <!-- OpenAI -->
-      <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-6">
-        <h3 class="text-sm font-medium text-zinc-300 mb-4">OpenAI 配置</h3>
-        <div class="max-w-xs">
-          <label class="block text-sm text-zinc-400 mb-1.5">默认模型 (/v1/chat/completions)</label>
-          <select id="sOpenaiModel" class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100">
-            ${MODEL_OPTIONS.map(m =>
-              '<option value="' + m + '"' + (s.openai?.default_model === m ? ' selected' : '') + '>' + m + '</option>'
-            ).join('')}
-          </select>
-          <p class="text-xs text-zinc-500 mt-1.5">客户端未指定 model 参数时使用的默认模型</p>
+      <!-- 连接配置预览 -->
+      <div class="rounded-xl border border-zinc-700 bg-zinc-900/50 p-6" id="modelPreview">
+        <div class="flex items-center gap-2 mb-4">
+          <svg class="w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+          <h3 class="text-sm font-medium text-zinc-300">连接配置预览：<span id="previewModelLabel" class="text-emerald-400">选择一个模型</span></h3>
         </div>
-        <div class="rounded-lg bg-zinc-800/50 border border-zinc-700/50 p-4 mt-4">
-          <p class="text-xs text-zinc-400 mb-2 font-medium">OpenAI 兼容连接配置</p>
-          <code class="block text-xs text-emerald-400 bg-zinc-900 rounded-md p-3 whitespace-pre">OPENAI_BASE_URL=http://localhost:${s.server.port}/v1
-OPENAI_API_KEY=${s.proxy.api_key || 'any-key-here'}</code>
+        <div class="max-w-xs mb-4">
+          <select id="previewModel" class="w-full rounded-lg border border-zinc-600 bg-zinc-800 px-3 py-2 text-sm text-zinc-100" onchange="selectPreviewModel()">
+            ${MODEL_OPTIONS.map(m => '<option value="' + m + '">' + m + '</option>').join('')}
+          </select>
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div class="rounded-lg bg-zinc-800 border border-zinc-700 p-4">
+            <p class="text-xs text-zinc-400 mb-2 font-medium">🔗 OpenAI 兼容 (http://localhost:8800/v1/chat/completions)</p>
+            <code id="previewOpenAI" class="block text-xs text-emerald-400 font-mono bg-zinc-900 rounded-md p-3 whitespace-pre">正在加载...</code>
+          </div>
+          <div class="rounded-lg bg-zinc-800 border border-zinc-700 p-4">
+            <p class="text-xs text-zinc-400 mb-2 font-medium">🔗 Claude Code (http://localhost:8800/v1/messages)</p>
+            <code id="previewClaude" class="block text-xs text-emerald-400 font-mono bg-zinc-900 rounded-md p-3 whitespace-pre">正在加载...</code>
+          </div>
         </div>
       </div>
       <!-- System Prompt Injection -->
@@ -722,88 +728,145 @@ OPENAI_API_KEY=${s.proxy.api_key || 'any-key-here'}</code>
       </div>
     </div>`;
 }
+// testModelUpdate is defined below (new version using /v1/models)
+
+const MODEL_OPTIONS = ['best','kimi-k3','longcat-2-0','glm-5-2','qwen3-7-max','kimi-k2-7-code','deepseek-v4-pro','deepseek-v4-flash','doubao-seed-2-1-pro','doubao-seed-2-1-turbo','minimax-m3','glm-5-1','glm-5v-turbo','kimi-k2-6','kimi-k2-5','minimax-m2-7','doubao-seed-2-0-lite','qwen3-5-plus','longcat-flash-chat','longcat-flash-thinking'];
+
+// ── 模型预览联动 ──
+
+function getServerPort() {
+  return document.getElementById('sPort')?.value || '8800';
+}
+
+function getDisplayHost() {
+  const h = window.location.hostname;
+  const port = getServerPort();
+  if (h === 'localhost' || h === '127.0.0.1') {
+    return `localhost:${port}`;
+  }
+  return `${h}:${port}`;
+}
+
+function getApiKey() {
+  return document.getElementById('sApiKey')?.value || 'any-key-here';
+}
+
+function selectPreviewModel() {
+  const model = document.getElementById('previewModel')?.value || 'best';
+  _selectedModel = model;
+  document.getElementById('previewModelLabel').textContent = model;
+  updateConfigPreview();
+}
+
+function updateConfigPreview() {
+  const model = document.getElementById('previewModel')?.value || 'best';
+  _selectedModel = model;
+  const host = getDisplayHost();
+  const apiKey = getApiKey();
+
+  document.getElementById('previewModelLabel').textContent = model;
+
+  // 标注模型类型
+  const modelInfo = _cachedModels.find(m => m.id === model);
+  if (modelInfo) {
+    const badge = modelInfo.access_type === 'premium_only' 
+      ? '<span class="text-[10px] bg-amber-900/50 text-amber-400 px-1.5 py-0.5 rounded-full align-middle">PRO</span>'
+      : '<span class="text-[10px] bg-zinc-700/50 text-zinc-500 px-1.5 py-0.5 rounded-full align-middle">免费</span>';
+    document.getElementById('previewModelLabel').innerHTML = model + ' ' + badge;
+  }
+
+  const openaiConfig = `OPENAI_BASE_URL=http://${host}/v1
+OPENAI_API_KEY=${apiKey}
+OPENAI_MODEL=${model}`;
+  document.getElementById('previewOpenAI').textContent = openaiConfig;
+
+  const claudeConfig = `ANTHROPIC_BASE_URL=http://${host}
+ANTHROPIC_API_KEY=${apiKey}
+ANTHROPIC_MODEL=${model}`;
+  document.getElementById('previewClaude').textContent = claudeConfig;
+
+  // Highlight selected model in grid
+  _renderModelGrid(document.getElementById('modelListGrid'));
+}
+
+setTimeout(updateConfigPreview, 100);
+
+// ── 模型更新测试（全局缓存，切换模块不丢失）──
 
 async function testModelUpdate() {
   const btn = document.getElementById('btnTestModels');
-  const resultDiv = document.getElementById('modelTestResult');
-  
-  btn.disabled = true;
-  btn.textContent = '⏳ 测试中...';
-  resultDiv.classList.remove('hidden');
-  resultDiv.innerHTML = '<div class="text-zinc-400">正在从 Tabbit API 获取最新模型列表...</div>';
-  
+  const result = document.getElementById('modelTestResult');
+  const container = document.getElementById('modelListContainer');
+  const grid = document.getElementById('modelListGrid');
+
+  // 检查是否有有效 Token
   try {
-    const response = await api('/test-models', {
-      method: 'POST',
-      body: JSON.stringify({})
-    });
-    
-    if (response.ok) {
-      resultDiv.innerHTML = `
-        <div class="p-3 rounded-lg bg-emerald-900/30 border border-emerald-700/50">
-          <div class="text-emerald-400 font-medium mb-1">✅ ${response.message}</div>
-          <div class="text-xs text-zinc-400 mt-1">
-            新增: ${response.new_models_count} 个模型 | 总计: ${response.total_models_count} 个模型
-          </div>
-        </div>
-      `;
-      
-      // Show new models if available
-      if (response.new_models && Object.keys(response.new_models).length > 0) {
-        const modelsHtml = Object.entries(response.new_models).map(([id, name]) => 
-          `<div class="text-xs text-zinc-300">• ${id}: ${name || id}</div>`
-        ).join('');
-        
-        resultDiv.innerHTML += `
-          <div class="mt-2 p-2 rounded bg-zinc-800/50 border border-zinc-700/50">
-            <div class="text-xs text-zinc-400 mb-1">新增模型（前20个）:</div>
-            ${modelsHtml}
-          </div>
-        `;
-      }
-      
-      // Update the model dropdown with new models
-      const selectEl = document.getElementById('sClaudeModel');
-      if (selectEl && response.new_models) {
-        // Clear existing options
-        selectEl.innerHTML = '';
-        
-        // Add all models from the updated MODEL_MAP
-        const allModels = Object.keys(response.new_models);
-        allModels.forEach(modelId => {
-          const option = document.createElement('option');
-          option.value = modelId;
-          option.textContent = modelId;
-          selectEl.appendChild(option);
-        });
-        
-        // Restore selected value if it exists
-        if (response.current_model && allModels.includes(response.current_model)) {
-          selectEl.value = response.current_model;
-        }
-      }
-    } else {
-      resultDiv.innerHTML = `
-        <div class="p-3 rounded-lg bg-red-900/30 border border-red-700/50">
-          <div class="text-red-400 font-medium mb-1">❌ 测试失败</div>
-          <div class="text-xs text-zinc-400">${response.error}</div>
-        </div>
-      `;
+    const tokensResp = await api('/tokens');
+    const validTokens = (tokensResp.tokens || []).filter(t => t.status === 'active' || t.status === 'ready');
+    if (validTokens.length === 0) {
+      result.className = 'text-sm text-amber-400';
+      result.textContent = '⚠️ 当前没有有效 Token，请先在 Tokens 页面添加';
+      result.classList.remove('hidden');
+      return;
     }
   } catch (e) {
-    resultDiv.innerHTML = `
-      <div class="p-3 rounded-lg bg-red-900/30 border border-red-700/50">
-        <div class="text-red-400 font-medium mb-1">❌ 请求失败</div>
-        <div class="text-xs text-zinc-400">${e.message}</div>
-      </div>
-    `;
+    result.className = 'text-sm text-amber-400';
+    result.textContent = '⚠️ 无法获取 Token 状态，请先添加 Token';
+    result.classList.remove('hidden');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = '⏳ 正在获取...';
+  result.className = 'text-sm';
+  result.classList.remove('hidden');
+  result.textContent = '';
+
+  try {
+    const resp = await fetch('/v1/models');
+    const data = await resp.json();
+    _cachedModels = data.data || [];
+
+    container.classList.remove('hidden');
+    result.className = 'text-sm text-emerald-400';
+    result.textContent = `✅ 获取成功，共 ${_cachedModels.length} 个模型`;
+
+    _renderModelGrid(grid);
+    // 更新 preview 下拉列表
+    const sel = document.getElementById('previewModel');
+    sel.innerHTML = _cachedModels.map(m => `<option value="${esc(m.id)}">${esc(m.id)}</option>`).join('');
+    if (_selectedModel && _cachedModels.find(m => m.id === _selectedModel)) {
+      sel.value = _selectedModel;
+    }
+    updateConfigPreview();
+  } catch (e) {
+    result.className = 'text-sm text-red-400';
+    result.textContent = '❌ 获取失败: ' + e.message;
   } finally {
     btn.disabled = false;
     btn.textContent = '🧪 测试模型更新';
   }
 }
 
-const MODEL_OPTIONS = ['best','kimi-k3','longcat-2-0','glm-5-2','qwen3-7-max','kimi-k2-7-code','deepseek-v4-pro','deepseek-v4-flash','doubao-seed-2-1-pro','doubao-seed-2-1-turbo','minimax-m3','glm-5-1','glm-5v-turbo','kimi-k2-6','kimi-k2-5','minimax-m2-7','doubao-seed-2-0-lite','qwen3-5-plus','longcat-flash-chat','longcat-flash-thinking'];
+function _renderModelGrid(grid) {
+  if (!grid) return;
+  grid.innerHTML = _cachedModels.map(m => `
+    <button data-model="${esc(m.id)}" onclick="selectModelFromGrid('${esc(m.id)}')"
+      class="flex items-center gap-2 rounded-lg border ${m.id === _selectedModel ? 'border-emerald-500 bg-zinc-700' : 'border-zinc-700 bg-zinc-800'} px-3 py-2 text-sm text-zinc-300 hover:border-zinc-500 hover:bg-zinc-700 transition-all text-left">
+      <span class="text-xs w-4 text-center">${m.supports_vision ? '👁' : '💬'}</span>
+      <span class="truncate">${esc(m.name || m.id)}</span>
+      ${m.access_type === 'premium_only' ? '<span class="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] bg-amber-900/50 text-amber-400 font-medium">PRO</span>' : '<span class="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] bg-zinc-700/50 text-zinc-500 font-medium">免费</span>'}
+    </button>
+  `).join('');
+}
+
+function selectModelFromGrid(modelId) {
+  _selectedModel = modelId;
+  const sel = document.getElementById('previewModel');
+  if (sel) sel.value = modelId;
+  selectPreviewModel();
+  _renderModelGrid(document.getElementById('modelListGrid'));
+}
 
 async function saveSettings() {
   try {
