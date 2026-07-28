@@ -376,6 +376,27 @@ def init(config: ConfigManager, token_manager: TokenManager, log_store: LogStore
         clear_all_sessions()
         return {"ok": True}
 
+    @r.post("/sessions/bind", dependencies=[Depends(admin_dep)])
+    async def bind_session(request: dict):
+        from routes.openai_compat import set_fixed_session
+        bearer = request.get("api_key", "")
+        model_id = request.get("model_id", "")
+        room_id = request.get("room_id", "")
+        if not bearer or not model_id or not room_id:
+            raise HTTPException(status_code=400, detail="api_key, model_id, room_id required")
+        set_fixed_session(bearer, model_id, room_id)
+        return {"ok": True, "message": f"已绑定 {model_id} → {room_id}"}
+
+    @r.post("/sessions/unbind", dependencies=[Depends(admin_dep)])
+    async def unbind_session(request: dict):
+        from routes.openai_compat import remove_fixed_session
+        bearer = request.get("api_key", "")
+        model_id = request.get("model_id", "")
+        ok = remove_fixed_session(bearer, model_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="未找到该绑定")
+        return {"ok": True}
+
     # ── Logs ──
 
     @r.get("/logs", dependencies=[Depends(admin_dep)])

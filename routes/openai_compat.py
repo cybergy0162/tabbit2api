@@ -26,8 +26,11 @@ _fallback_clients: dict[str, TabbitClient] = {}
 
 # Session cache: key = (bearer_token, model_id) -> {"session_id": str, "created_at": float, "use_v3": bool, "last_used": float, "request_count": int}
 _session_cache: dict[str, dict] = {}
-SESSION_TTL = 1800  # 30 minutes session lifetime
+SESSION_TTL = 604800  # 7 days — effectively permanent, user manages via admin panel
 SESSION_ENABLED = True  # configurable
+
+# Fixed session bindings: key = (bearer_token, model_id) -> room_id (manually set, never expires)
+_fixed_sessions: dict[str, str] = {}
 
 # Per-session locks to prevent concurrent runs (avoids 409 Conflict)
 _session_locks: dict[str, asyncio.Lock] = {}
@@ -52,6 +55,23 @@ def get_session_list() -> list:
             "ttl_remaining": max(0, int(SESSION_TTL - (now - entry.get("created_at", 0)))),
             "use_v3": entry.get("use_v3", False),
         })
+    # Add fixed bindings
+    for key, room_id in _fixed_sessions.items():
+        parts = key.split(":", 1)
+        bearer = parts[0] if len(parts) > 0 else ""
+        model_id = parts[1] if len(parts) > 1 else ""
+        result.append({
+            "cache_key": key,
+            "api_key_preview": (bearer[:12] + "...") if len(bearer) > 12 else bearer,
+            "model_id": model_id,
+            "session_id": room_id,
+            "created_at": 0,
+            "last_used": 0,
+            "request_count": 0,
+            "ttl_remaining": -1,  # -1 = 永久
+            "use_v3": False,
+            "fixed": True,
+        })
     return sorted(result, key=lambda x: x["last_used"], reverse=True)
 
 
@@ -72,15 +92,82 @@ def _session_key(bearer: str, model_id: str) -> str:
 
 
 def _get_cached_session(bearer: str, model_id: str) -> Optional[str]:
-    """Return cached session_id if valid, else None."""
+    """Return cached session_id if valid, else None.
+    Priority: fixed binding > auto-cached session."""
+    sk = _session_key(bearer, model_id)
+    
+    # 1) Fixed binding (manually set, never expires)
+    if sk in _fixed_sessions:
+        return _fixed_sessions[sk]
+    
+    # 2) Auto-cached session (TTL-based)
     if not SESSION_ENABLED:
         return None
-    entry = _session_cache.get(_session_key(bearer, model_id))
+    entry = _session_cache.get(sk)
     if entry and time.time() - entry["created_at"] < SESSION_TTL:
         entry["last_used"] = time.time()
         entry["request_count"] = entry.get("request_count", 0) + 1
         return entry["session_id"]
     return None
+
+
+def set_fixed_session(bearer: str, model_id: str, room_id: str):
+    """Manually bind a Tabbit room to an API Key + model."""
+    _fixed_sessions[_session_key(bearer, model_id)] = room_id
+
+
+def remove_fixed_session(bearer: str, model_id: str) -> bool:
+    """Remove a fixed binding. Returns True if found."""
+    sk = _session_key(bearer, model_id)
+    if sk in _fixed_sessions:
+        del _fixed_sessions[sk]
+        return True
+    return False
+
+
+def get_fixed_sessions() -> dict:
+    """Return all fixed bindings."""
+    return dict(_fixed_sessions)
+
+
+def get_session_list() -> list:
+    """Return all active sessions for admin display."""
+    result = []
+    now = time.time()
+    for key, entry in _session_cache.items():
+        parts = key.split(":", 1)
+        bearer = parts[0] if len(parts) > 0 else ""
+        model_id = parts[1] if len(parts) > 1 else ""
+        result.append({
+            "cache_key": key,
+            "api_key_preview": (bearer[:12] + "...") if len(bearer) > 12 else bearer,
+            "model_id": model_id,
+            "session_id": entry.get("session_id", ""),
+            "created_at": entry.get("created_at", 0),
+            "last_used": entry.get("last_used", entry.get("created_at", 0)),
+            "request_count": entry.get("request_count", 0),
+            "ttl_remaining": max(0, int(SESSION_TTL - (now - entry.get("created_at", 0)))),
+            "use_v3": entry.get("use_v3", False),
+            "fixed": False,
+        })
+    # Add fixed bindings
+    for key, room_id in _fixed_sessions.items():
+        parts = key.split(":", 1)
+        bearer = parts[0] if len(parts) > 0 else ""
+        model_id = parts[1] if len(parts) > 1 else ""
+        result.append({
+            "cache_key": key,
+            "api_key_preview": (bearer[:12] + "...") if len(bearer) > 12 else bearer,
+            "model_id": model_id,
+            "session_id": room_id,
+            "created_at": 0,
+            "last_used": 0,
+            "request_count": 0,
+            "ttl_remaining": -1,
+            "use_v3": False,
+            "fixed": True,
+        })
+    return sorted(result, key=lambda x: x["last_used"], reverse=True)
 
 
 def _cache_session(bearer: str, model_id: str, session_id: str, use_v3: bool):
@@ -345,19 +432,61 @@ async def chat_completions(
         else:
             model_id = (req.model or _cfg.get("openai", "default_model", default="best")).lower() if _cfg else (req.model or "best").lower()
             tabbit_model = tabbit_client.MODEL_MAP.get(model_id, model_id)
+            
+            # DEBUG: log full request from WorkBuddy
+            logger.info(f"[DEBUG] Request model={model_id} tabbit_model={tabbit_model} messages_count={len(req.messages)}")
+            for i, m in enumerate(req.messages):
+                logger.info(f"[DEBUG]   msg[{i}] role={m.role} content_len={len(str(m.content))} content_preview={str(m.content)[:200]}")
+            
+            import re as _re
             # Only send the last user message — Tabbit room maintains its own history
-            # WorkBuddy/Trae send full message arrays; we extract just the final prompt
+            # WorkBuddy sends huge messages with workspace context; we extract the real question
             last_user = ""
             for m in reversed(req.messages):
                 if m.role == "user":
-                    last_user = _normalize_content(m.content)
+                    raw = _normalize_content(m.content)
+                    # Extract from <user_query>...</user_query> tags if present
+                    match = _re.search(r'<user_query>(.*?)</user_query>', raw, _re.DOTALL)
+                    if match:
+                        last_user = match.group(1).strip()
+                    elif len(raw) > 2000:
+                        # Huge user message (WorkBuddy workspace context) — take last meaningful line(s)
+                        # Strip the initial OS/environment info, get the actual question at the end
+                        lines = raw.strip().split('\n')
+                        # Work backwards to find the actual user query (short lines at the end)
+                        meaningful = []
+                        for line in reversed(lines):
+                            line = line.strip()
+                            if not line:
+                                continue
+                            # Skip long environment lines
+                            if len(line) > 200 or line.startswith(('OS Version:', 'Shell:', 'Workspace:', 'Current date:', '<system-reminder', '</system-reminder>', '```')):
+                                continue
+                            meaningful.insert(0, line)
+                            if len('\n'.join(meaningful)) > 500:
+                                break
+                        last_user = '\n'.join(meaningful) if meaningful else raw[-500:]
+                    else:
+                        last_user = raw
                     break
-            # Also prepend system message if present
-            system_msgs = [_normalize_content(m.content) for m in req.messages if m.role == "system"]
+            
+            # Also prepend system message if present (filter out WorkBuddy internal prompts)
+            system_msgs = []
+            for m in req.messages:
+                if m.role == "system":
+                    content_str = _normalize_content(m.content)
+                    # Skip WorkBuddy/Trae internal title-generation prompts
+                    if 'isNewTopic' in content_str or 'Generate a concise' in content_str or 'sentence-case title' in content_str or 'Respond with EXACTLY one JSON object' in content_str:
+                        continue
+                    # Skip long agent system prompts (>2000 chars = WorkBuddy agent prompt, not user's)
+                    if len(content_str) > 2000:
+                        continue
+                    system_msgs.append(content_str)
             if system_msgs:
                 content = "\n\n".join(system_msgs) + "\n\n" + last_user
             else:
                 content = last_user
+            logger.info(f"[DEBUG] Final content ({len(content)} chars): {content[:300]}")
     except Exception as e:
         raise HTTPException(status_code=400, detail="Invalid request format")
     
@@ -410,15 +539,22 @@ async def chat_completions(
                 et, ed = event["event"], event["data"]
                 if et == "error":
                     error_msg = ed.get("message", str(ed))
+                    logger.warning(f"[DEBUG] V3 error: {error_msg}")
                     break
                 if et == "message_chunk" and "content" in ed:
                     full_text += ed["content"]
         else:
             async for event in client.send_message(sid, content, tabbit_model):
-                if event["event"] == "message_chunk":
-                    full_text += event["data"].get("content", "")
-                elif event["event"] == "error":
-                    error_msg = event["data"].get("message", str(event["data"]))
+                et = event["event"]
+                ed = event["data"]
+                if et == "message_chunk":
+                    full_text += ed.get("content", "")
+                elif et == "error":
+                    error_msg = ed.get("message", str(ed))
+                    logger.warning(f"[DEBUG] V1 error: code={ed.get('code')} msg={error_msg}")
+                elif et not in ("message_chunk",):
+                    logger.info(f"[DEBUG] V1 event: {et} data_keys={list(ed.keys()) if isinstance(ed, dict) else str(ed)[:100]}")
+        logger.info(f"[DEBUG] _do_chat result: full_text_len={len(full_text)} error_msg={error_msg[:200] if error_msg else 'None'}")
     
     try:
         # Serialize requests to the same session to avoid 409 Conflict

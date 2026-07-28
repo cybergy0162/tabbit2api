@@ -143,7 +143,7 @@ class TabbitClient:
     def _get_chat_headers(self, session_id: str) -> dict:
         trace_id = self._generate_uuid().replace('-', '')
         return {
-            **self._get_headers(f"/chat/{session_id}"),
+            **self._get_headers(f"/session/{session_id}"),
             "Accept": "text/event-stream",
             "Content-Type": "application/json",
             "Cache-Control": "no-cache",

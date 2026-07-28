@@ -519,6 +519,21 @@ async function renderSessions(el) {
         清除全部会话
       </button>` : ''}
     </div>
+    
+    <!-- 固定绑定 -->
+    <div class="rounded-xl border border-amber-800/50 bg-amber-900/10 p-6 mb-6" id="bindSection">
+      <h3 class="text-sm font-medium text-amber-400 mb-3">📌 固定会话绑定（永久有效，不随 TTL 过期）</h3>
+      <p class="text-xs text-zinc-400 mb-4">将 Tabbit 对话列表中的 room 绑定到 API Key + 模型，之后该组合的请求永久走这个 room，上下文不丢失。</p>
+      <div class="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-3">
+        <input id="bindApiKey" placeholder="API Key（如 sk-xxx）" class="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100">
+        <input id="bindModel" placeholder="模型ID（如 kimi-k3）" class="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100">
+        <input id="bindRoomId" placeholder="Room ID（从 Tabbit URL 复制）" class="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100">
+        <button onclick="bindSession()" class="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-500 transition-colors">🔗 绑定</button>
+      </div>
+      <p class="text-xs text-zinc-500">Room ID 获取方式：在 Tabbit 网页中打开目标对话，URL 中 /session/ 后面的部分即为 Room ID</p>
+      <div id="bindResult" class="mt-2 text-sm hidden"></div>
+    </div>
+
     ${data.total === 0 ? `
     <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-12 text-center">
       <p class="text-zinc-400">暂无活跃会话</p>
@@ -531,25 +546,30 @@ async function renderSessions(el) {
             <th class="px-5 py-3 font-medium">API Key</th>
             <th class="px-5 py-3 font-medium">模型</th>
             <th class="px-5 py-3 font-medium">Session ID</th>
-            <th class="px-5 py-3 font-medium">API 类型</th>
+            <th class="px-5 py-3 font-medium">类型</th>
             <th class="px-5 py-3 font-medium">请求次数</th>
             <th class="px-5 py-3 font-medium">剩余 TTL</th>
             <th class="px-5 py-3 font-medium">最后使用</th>
             <th class="px-5 py-3 font-medium text-right">操作</th>
           </tr></thead>
           <tbody>
-            ${data.sessions.map(s => `<tr class="border-b border-zinc-800/50 hover:bg-zinc-800/30">
+            ${data.sessions.map(s => `<tr class="border-b border-zinc-800/50 hover:bg-zinc-800/30 ${s.fixed ? 'bg-amber-900/10' : ''}">
               <td class="px-5 py-3 font-mono text-xs">${esc(s.api_key_preview)}</td>
               <td class="px-5 py-3 font-medium">${esc(s.model_id)}</td>
               <td class="px-5 py-3 font-mono text-xs text-zinc-400">${esc(s.session_id.substring(0,12))}...</td>
-              <td class="px-5 py-3"><span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${s.use_v3 ? 'bg-purple-900/50 text-purple-400' : 'bg-blue-900/50 text-blue-400'}">${s.use_v3 ? 'V3' : 'V1'}</span></td>
+              <td class="px-5 py-3">
+                ${s.fixed ? '<span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-amber-900/50 text-amber-400">📌 固定</span>' : 
+                `<span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${s.use_v3 ? 'bg-purple-900/50 text-purple-400' : 'bg-blue-900/50 text-blue-400'}">${s.use_v3 ? 'V3' : 'V1'}</span>`}
+              </td>
               <td class="px-5 py-3">${s.request_count}</td>
-              <td class="px-5 py-3 text-zinc-400">${Math.floor(s.ttl_remaining/60)}分${s.ttl_remaining%60}秒</td>
-              <td class="px-5 py-3 text-zinc-400 text-xs">${fmtTime(new Date(s.last_used*1000).toISOString())}</td>
+              <td class="px-5 py-3 text-zinc-400">${s.fixed ? '<span class="text-amber-400">永久</span>' : Math.floor(s.ttl_remaining/60)+'分'+s.ttl_remaining%60+'秒'}</td>
+              <td class="px-5 py-3 text-zinc-400 text-xs">${s.last_used ? fmtTime(new Date(s.last_used*1000).toISOString()) : '-'}</td>
               <td class="px-5 py-3 text-right">
-                <button onclick="deleteSession('${esc(s.cache_key)}')" class="inline-flex items-center rounded-md bg-zinc-800 px-2.5 py-1.5 text-xs hover:bg-red-900/50 text-red-400 transition-colors" title="删除会话">
+                ${s.fixed ? 
+                `<button onclick="unbindSession('${esc(s.cache_key)}')" class="inline-flex items-center rounded-md bg-amber-900/50 px-2.5 py-1.5 text-xs text-amber-400 hover:bg-red-900/50 hover:text-red-400 transition-colors" title="解除绑定">解除</button>` :
+                `<button onclick="deleteSession('${esc(s.cache_key)}')" class="inline-flex items-center rounded-md bg-zinc-800 px-2.5 py-1.5 text-xs hover:bg-red-900/50 text-red-400 transition-colors" title="删除会话">
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                </button>
+                </button>`}
               </td>
             </tr>`).join('')}
           </tbody>
@@ -557,13 +577,47 @@ async function renderSessions(el) {
       </div>
     </div>`}
     <div class="mt-4 rounded-xl border border-zinc-800 bg-zinc-900 p-4 text-xs text-zinc-400">
-      <p class="font-medium text-zinc-300 mb-1">会话缓存说明</p>
+      <p class="font-medium text-zinc-300 mb-1">会话管理说明</p>
       <ul class="space-y-1 list-disc list-inside">
         <li>同一 API Key + 同一模型共享一个 Tabbit 会话，保持对话记忆</li>
-        <li>会话在 TTL（${Math.floor(data.ttl_seconds/60)}分钟）后自动过期，下次请求会创建新会话</li>
+        <li><span class="text-amber-400">📌 固定会话</span>：手动绑定后永久有效，不随 TTL 过期，适合长期对话</li>
+        <li>自动缓存 TTL 默认 7 天，到期后自动创建新会话（可在 Settings 调整）</li>
         <li>${data.enabled ? '<span class="text-emerald-400">缓存已启用</span>' : '<span class="text-red-400">缓存已禁用</span>'} — 可在 Settings 中配置</li>
       </ul>
     </div>`;
+}
+
+async function bindSession() {
+  const apiKey = document.getElementById('bindApiKey').value.trim();
+  const modelId = document.getElementById('bindModel').value.trim();
+  const roomId = document.getElementById('bindRoomId').value.trim();
+  if (!apiKey || !modelId || !roomId) {
+    document.getElementById('bindResult').className = 'text-sm text-red-400';
+    document.getElementById('bindResult').textContent = '请填写所有字段';
+    document.getElementById('bindResult').classList.remove('hidden');
+    return;
+  }
+  try {
+    await api('/sessions/bind', { method: 'POST', body: JSON.stringify({ api_key: apiKey, model_id: modelId, room_id: roomId }) });
+    document.getElementById('bindResult').className = 'text-sm text-emerald-400';
+    document.getElementById('bindResult').textContent = '✅ 绑定成功！';
+    document.getElementById('bindResult').classList.remove('hidden');
+    document.getElementById('bindApiKey').value = '';
+    document.getElementById('bindModel').value = '';
+    document.getElementById('bindRoomId').value = '';
+    renderSessions(document.getElementById('pageContent'));
+  } catch (e) {
+    document.getElementById('bindResult').className = 'text-sm text-red-400';
+    document.getElementById('bindResult').textContent = '❌ 绑定失败: ' + e.message;
+    document.getElementById('bindResult').classList.remove('hidden');
+  }
+}
+
+async function unbindSession(key) {
+  if (!confirm('确定解除此固定绑定？')) return;
+  const parts = key.split(':', 2);
+  await api('/sessions/unbind', { method: 'POST', body: JSON.stringify({ api_key: parts[0], model_id: parts[1] || '' }) });
+  renderSessions(document.getElementById('pageContent'));
 }
 
 async function deleteSession(key) {
@@ -694,8 +748,8 @@ async function renderSettings(el) {
           </div>
           <div>
             <label class="block text-sm text-zinc-400 mb-1.5">TTL（秒）</label>
-            <input id="sSessionTTL" type="number" value="${s.session?.ttl_seconds || 1800}" min="60" step="60" class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100">
-            <p class="text-xs text-zinc-500 mt-1">超时后自动创建新会话，默认1800秒（30分钟）</p>
+            <input id="sSessionTTL" type="number" value="${s.session?.ttl_seconds || 604800}" min="60" step="3600" class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100">
+            <p class="text-xs text-zinc-500 mt-1">超时后自动创建新会话，默认604800秒（7天），可设为极大值实现永久</p>
           </div>
         </div>
       </div>
