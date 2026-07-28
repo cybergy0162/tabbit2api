@@ -1,4 +1,4 @@
-# Tabbit2API v2.0
+# Tabbit2API v2.1
 
 [![Docker](https://img.shields.io/badge/Docker-ready-blue.svg)](https://www.docker.com/)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
@@ -13,15 +13,18 @@
 
 - **双协议兼容** — OpenAI `/v1/chat/completions` + Claude `/v1/messages`
 - **Premium 模型支持** — Kimi-K3 通过 v3 API 自动分流
+- **Agent 级消息清洗** — 自动过滤伪请求（标题生成等），去重 system/tool 消息，从超长消息中精准提取 `<user_query>` 真实问题
+- **上下文管理** — 滑动窗口 + Token 估算，防止上下文溢出
+- **Token 池增强** — 加权轮询 + ACTIVE/COOLDOWN/BANNED 状态机 + Fernet 加密存储
+- **Agent 模型路由** — 支持 `X-Agent-Phase` 头部按阶段选择不同模型
+- **Tool Calling 支持** — 解析 OpenAI tools 定义，注入工具 prompt，检测工具调用输出
 - **对话记忆** — Session 自动缓存，同一 API Key 共享 Tabbit room，保持上下文连续
 - **永久会话** — 默认 TTL 7 天，用户可在管理面板管理所有活跃会话
 - **固定绑定** — 可手动绑定 Tabbit room，实现真正的永久对话
 - **并发锁** — asyncio 锁防止 409 冲突，请求排队
 - **429 自动重试** — 触发限流后等待重试
-- **智能消息处理** — 自动过滤 WorkBuddy 标题生成指令，从超长消息中提取真实问题
-- **模型管理面板** — 一键拉取最新模型列表，PRO/免费标注，选中后自动生成连接配置
+- **管理面板** — 模型管理、会话管理、Agent 状态监控、Settings 功能开关
 - **配置预览** — 根据访问来源自动判断 localhost 或公网 IP，展示 OpenAI / Claude 完整配置
-- **多账户 Token 池** — 轮询负载均衡 + 智能健康管理
 - **Docker 一键部署**
 
 ## 🚀 快速开始
@@ -125,6 +128,16 @@ claude
 | API Key | 空 | 全局鉴权（可选） |
 | 会话缓存 | 启用 / 604800s TTL | 可关闭或调整 |
 
+### Agent 功能开关（管理面板 Settings 页面）
+
+| 功能 | 说明 |
+|------|------|
+| **消息清洗** | 过滤伪请求、去重系统消息、提取 `<user_query>` |
+| **上下文管理** | 滑动窗口截断，防止超长上下文 |
+| **Token 池** | 多账户轮询 + 状态机健康管理 |
+| **Agent 路由** | 按 Agent 阶段选择模型 |
+| **Tool Calling** | 解析并注入工具定义 |
+
 ### 环境变量
 
 | 变量 | 说明 | 默认值 |
@@ -142,6 +155,13 @@ Agent (WorkBuddy/Trae/CodeBuddy)
          ▼
     Tabbit2API (FastAPI :8800)
          │
+         ├─ Agent 模块 ──────────────────────────┐
+         │  ├─ Message Cleaner (消息清洗)         │
+         │  ├─ Context Manager (上下文管理)       │
+         │  ├─ Token Pool (Token 池)              │
+         │  ├─ Agent Router (模型路由)            │
+         │  └─ Tool Handler (工具调用)            │
+         │                                        │
          ├─ 免费模型 → v1 API  (/api/v1/chat/completion)
          │
          └─ PRO 模型 → v3 API
