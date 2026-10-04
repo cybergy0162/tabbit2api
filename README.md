@@ -46,6 +46,11 @@ docker compose up -d
 | `http://localhost:8800/admin` | 管理面板（默认密码 `admin`） |
 | `http://localhost:8800/health` | 健康检查 |
 
+### 添加 Tabbit Token
+
+首次使用需为每个 Tabbit 账号添加一个 **Access Token**（管理面板 → Tokens 管理 → 添加 Token）。
+获取方法见 **[TOKEN.md](./TOKEN.md)**（也可用 `tools/get_tabbit_token.mjs` 一键导出）。
+
 ## 📦 模型列表（20 个）
 
 | 模型 ID | 名称 | 类型 | 说明 |
