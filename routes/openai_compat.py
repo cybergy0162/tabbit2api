@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 import core.tabbit_client as tabbit_client
 from core.tabbit_client import TabbitClient
+from core.tabbit_client import get_model_access_type, MODEL_META, TIERS_FREE, TIERS_PREMIUM
 from core.token_manager import TokenManager
 from core.log_store import LogStore, LogEntry
 from core.config import ConfigManager
@@ -364,20 +365,59 @@ async def _get_client_and_token(authorization: str | None) -> tuple[TabbitClient
     if token not in _fallback_clients:
         _fallback_clients[token] = TabbitClient(
             token,
-            _cfg.get("tabbit", "base_url"),
+            _cfg.get_active_base_url(),
             _cfg.get("tabbit", "client_id"),
         )
     return _fallback_clients[token], "bearer", ""
 
 
 def _get_model_access_type(model_id: str) -> str:
-    """Return the access_type for a given model_id."""
-    info = MODEL_INFO.get(model_id, {})
-    return info.get("access_type", "free_metered")
+    """Return the access_type for a given model_id (live from upstream meta)."""
+    return get_model_access_type(model_id)
 
 
 def _is_premium_model(model_id: str) -> bool:
     return _get_model_access_type(model_id) == "premium_only"
+
+
+# ── 端点档位（分档隔离）──
+# /v1 = 默认 + 免费计量；/v3 = 会员档
+def _tier_allows(tier: str, model_id: str) -> bool:
+    at = _get_model_access_type(model_id)
+    if tier == "premium":
+        return at in TIERS_PREMIUM
+    # tier == "free"：默认(免费无限) + 免费计量 + 默认模型别名
+    return (at in TIERS_FREE) or (not at)
+
+
+def _resolve_tier(tier: str, model_id: str) -> str:
+    """按端点档位归一化模型 id；不允许的档位报错。
+    - 空 model → 本端默认（free 端用 default，premium 端用 premium 档第一个可用模型）
+    - '/v1 传会员模型' → 400（引导去 /v3）
+    - /v3 传免费模型 → 400（引导去 /v1）
+    - 别名 best / '默认模型' id 统一归一化为 default
+    """
+    norm = (model_id or "").lower().strip()
+    if not norm or norm in ("best", "默认"):
+        norm = "default"
+    if norm not in tabbit_client.MODEL_MAP:
+        # 空 model：premium 端取该档第一个可用模型
+        if tier == "premium":
+            for mid in tabbit_client.MODEL_MAP.keys():
+                if _tier_allows("premium", mid):
+                    return mid
+        return "default"
+    if not _tier_allows(tier, norm):
+        if tier == "premium":
+            raise HTTPException(
+                status_code=400,
+                detail=f"模型 '{norm}' 属于免费档（默认/倍率），请使用 /v1 端点",
+            )
+        raise HTTPException(
+            status_code=400,
+            detail=f"模型 '{norm}' 属于会员档（需付费/会员），请使用 /v3 端点",
+        )
+    return norm
 
 
 async def _stream_handler(client, session_id, content, tabbit_model, req_model, completion_id, token_name, token_id, use_v3=False):
@@ -435,8 +475,23 @@ async def _stream_handler(client, session_id, content, tabbit_model, req_model, 
 
 
 @router.post("/v1/chat/completions")
-async def chat_completions(
+async def chat_completions_v1(
     req: ChatCompletionRequest | SimpleChatRequest, authorization: str = Header(None)
+):
+    return await _chat_completions(req, authorization, tier="free")
+
+
+@router.post("/v3/chat/completions")
+async def chat_completions_v3(
+    req: ChatCompletionRequest | SimpleChatRequest, authorization: str = Header(None)
+):
+    return await _chat_completions(req, authorization, tier="premium")
+
+
+async def _chat_completions(
+    req: ChatCompletionRequest | SimpleChatRequest,
+    authorization: str | None,
+    tier: str = "free",
 ):
     try:
         client, token_name, token_id = await _get_client_and_token(authorization)
@@ -447,20 +502,21 @@ async def chat_completions(
     
     try:
         if isinstance(req, SimpleChatRequest):
-            model_id = "best"
+            model_id = "default"
             tabbit_model = "最佳"
             content = _normalize_content(req.content)
         else:
-            model_id = (req.model or _cfg.get("openai", "default_model", default="best")).lower() if _cfg else (req.model or "best").lower()
-            
+            raw_model = (req.model or _cfg.get("openai", "default_model", default="default")) if _cfg else (req.model or "default")
+            model_id = _resolve_tier(tier, raw_model)
+
             # Agent router: detect phase and potentially remap model
             agent_config = _cfg.get("agent", default={}) if _cfg else {}
             if agent_config.get("router", {}).get("enabled", False):
                 selector = ModelSelector()
-                model_id = selector.resolve(model_id)
-            
+                model_id = _resolve_tier(tier, selector.resolve(model_id))
+
             tabbit_model = tabbit_client.MODEL_MAP.get(model_id, model_id)
-            
+
             # Agent message cleaner
             if agent_config.get("cleaner", {}).get("enabled", False):
                 bearer = _extract_bearer_token(authorization) if authorization else ""
@@ -520,6 +576,8 @@ async def chat_completions(
                 if tool_prompt:
                     content = tool_prompt + "\n\n" + content
             logger.info(f"[DEBUG] Final content ({len(content)} chars): {content[:300]}")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail="Invalid request format")
     
@@ -642,220 +700,49 @@ async def chat_completions(
     }
 
 
-MODEL_INFO = {
-    "best": {
-        "id": "best",
-        "name": "最佳",
-        "description": "默认模式，该模式下不消耗模型用量，使用量无上限",
-        "max_tokens": 100000,
-        "supports_streaming": True,
-        "supports_vision": False,
-        "access_type": "free_unlimited",
-    },
-    "kimi-k3": {
-        "id": "kimi-k3",
-        "name": "Kimi-K3",
-        "description": "Kimi 迄今能力最强的旗舰模型，支持 1M token 上下文与视觉理解，适合软件工程、知识工作和深度推理",
-        "max_tokens": 1000000,
-        "supports_streaming": True,
-        "supports_vision": False,
-        "access_type": "premium_only",
-    },
-    "longcat-2-0": {
-        "id": "longcat-2-0",
-        "name": "LongCat-2.0",
-        "description": "美团最新的自研旗舰文本模型，增强了 Agentic 能力，原生支持 1M 上下文",
-        "max_tokens": 1000000,
-        "supports_streaming": True,
-        "supports_vision": False,
-        "access_type": "free_metered",
-    },
-    "glm-5-2": {
-        "id": "glm-5-2",
-        "name": "GLM-5.2",
-        "description": "智谱最新的文本模型，深度优化了长程任务能力",
-        "max_tokens": 128000,
-        "supports_streaming": True,
-        "supports_vision": False,
-        "access_type": "free_metered",
-    },
-    "qwen3-7-max": {
-        "id": "qwen3-7-max",
-        "name": "Qwen3.7-Max",
-        "description": "阿里千问的旗舰级文本模型，大幅提升了在编程与通用型智能体上的表现，适合复杂任务",
-        "max_tokens": 128000,
-        "supports_streaming": True,
-        "supports_vision": False,
-        "access_type": "free_metered",
-    },
-    "kimi-k2-7-code": {
-        "id": "kimi-k2-7-code",
-        "name": "Kimi-K2.7-Code",
-        "description": "月之暗面最新的旗舰多模态 Coding 模型，适合复杂编程任务",
-        "max_tokens": 128000,
-        "supports_streaming": True,
-        "supports_vision": True,
-        "access_type": "free_metered",
-    },
-    "deepseek-v4-pro": {
-        "id": "deepseek-v4-pro",
-        "name": "DeepSeek-V4-Pro",
-        "description": "DeepSeek 的全新旗舰模型，Pro版",
-        "max_tokens": 128000,
-        "supports_streaming": True,
-        "supports_vision": True,
-        "access_type": "free_metered",
-    },
-    "deepseek-v4-flash": {
-        "id": "deepseek-v4-flash",
-        "name": "DeepSeek-V4-Flash",
-        "description": "DeepSeek 的全新旗舰模型，Flash版",
-        "max_tokens": 128000,
-        "supports_streaming": True,
-        "supports_vision": True,
-        "access_type": "free_metered",
-    },
-    "doubao-seed-2-1-pro": {
-        "id": "doubao-seed-2-1-pro",
-        "name": "Doubao-Seed-2.1-Pro",
-        "description": "字节跳动最新的旗舰多模态模型，Pro 版，适合复杂任务",
-        "max_tokens": 128000,
-        "supports_streaming": True,
-        "supports_vision": True,
-        "access_type": "free_metered",
-    },
-    "doubao-seed-2-1-turbo": {
-        "id": "doubao-seed-2-1-turbo",
-        "name": "Doubao-Seed-2.1-Turbo",
-        "description": "字节跳动最新的旗舰多模态模型，Turbo 版，适合日常使用",
-        "max_tokens": 128000,
-        "supports_streaming": True,
-        "supports_vision": True,
-        "access_type": "free_metered",
-    },
-    "minimax-m3": {
-        "id": "minimax-m3",
-        "name": "MiniMax-M3",
-        "description": "MiniMax 最新的旗舰级原生多模态模型",
-        "max_tokens": 128000,
-        "supports_streaming": True,
-        "supports_vision": True,
-        "access_type": "free_metered",
-    },
-    "glm-5-1": {
-        "id": "glm-5-1",
-        "name": "GLM-5.1",
-        "description": "智谱的文本模型，深度优化了长程任务能力",
-        "max_tokens": 128000,
-        "supports_streaming": True,
-        "supports_vision": False,
-        "access_type": "free_metered",
-    },
-    "glm-5v-turbo": {
-        "id": "glm-5v-turbo",
-        "name": "GLM-5V-Turbo",
-        "description": "智谱最新的多模态模型，深度优化了图像理解能力",
-        "max_tokens": 128000,
-        "supports_streaming": True,
-        "supports_vision": True,
-        "access_type": "free_metered",
-    },
-    "kimi-k2-6": {
-        "id": "kimi-k2-6",
-        "name": "Kimi-K2.6",
-        "description": "Moonshot 最新的旗舰级多模态模型，适合大部分任务",
-        "max_tokens": 128000,
-        "supports_streaming": True,
-        "supports_vision": True,
-        "access_type": "free_metered",
-    },
-    "kimi-k2-5": {
-        "id": "kimi-k2-5",
-        "name": "Kimi-K2.5",
-        "description": "Moonshot 的旗舰级多模态模型，适合大部分任务",
-        "max_tokens": 128000,
-        "supports_streaming": True,
-        "supports_vision": True,
-        "access_type": "free_metered",
-    },
-    "minimax-m2-7": {
-        "id": "minimax-m2-7",
-        "name": "MiniMax-M2.7",
-        "description": "MiniMax 最新的旗舰级文本模型",
-        "max_tokens": 128000,
-        "supports_streaming": True,
-        "supports_vision": False,
-        "access_type": "free_metered",
-    },
-    "doubao-seed-2-0-lite": {
-        "id": "doubao-seed-2-0-lite",
-        "name": "Doubao-Seed-2.0-lite",
-        "description": "字节跳动豆包大模型系列的最新多模态模型，适合日常使用",
-        "max_tokens": 128000,
-        "supports_streaming": True,
-        "supports_vision": True,
-        "access_type": "free_metered",
-    },
-    "qwen3-5-plus": {
-        "id": "qwen3-5-plus",
-        "name": "Qwen3.5-Plus",
-        "description": "阿里千问首个原生多模态大模型，整合语言推理与视觉感知，适合大多数任务",
-        "max_tokens": 128000,
-        "supports_streaming": True,
-        "supports_vision": True,
-        "access_type": "free_metered",
-    },
-    "longcat-flash-chat": {
-        "id": "longcat-flash-chat",
-        "name": "LongCat-Flash-Chat",
-        "description": "美团的上一代自研旗舰模型，推理速度快、推理效果优",
-        "max_tokens": 128000,
-        "supports_streaming": True,
-        "supports_vision": False,
-        "access_type": "free_metered",
-    },
-    "longcat-flash-thinking": {
-        "id": "longcat-flash-thinking",
-        "name": "LongCat-Flash-Thinking",
-        "description": "美团的上一代自研旗舰思考模型，性能更强、泛化效果更优",
-        "max_tokens": 128000,
-        "supports_streaming": True,
-        "supports_vision": False,
-        "access_type": "free_metered",
-    },
-}
 
 
-@router.get("/v1/models")
-async def list_models():
+def _build_model_list(tier: str) -> list:
     models = []
     for model_id, model_name in tabbit_client.MODEL_MAP.items():
-        info = MODEL_INFO.get(model_id, {})
+        if not _tier_allows(tier, model_id):
+            continue
+        meta = MODEL_META.get(model_id, {})
         models.append({
             "id": model_id,
             "object": "model",
             "created": 1714502400,
             "owned_by": "tabbit",
             "name": model_name,
-            "description": info.get("description", f"Tabbit model: {model_name}"),
-            "max_tokens": info.get("max_tokens", 128000),
-            "supports_streaming": info.get("supports_streaming", True),
-            "supports_vision": info.get("supports_vision", True),
-            "access_type": info.get("access_type", "free_metered"),
+            "description": meta.get("description") or f"Tabbit model: {model_name}",
+            "max_tokens": 128000,
+            "supports_streaming": True,
+            "supports_vision": meta.get("supports_vision", True),
+            "access_type": _get_model_access_type(model_id),
+            "multiplier": meta.get("multiplier"),
         })
-    return {
-        "object": "list",
-        "data": models
-    }
+    return models
+
+
+@router.get("/v1/models")
+async def list_models_v1():
+    """免费端点：default(免费无限) + 倍率(免费计量)"""
+    return {"object": "list", "data": _build_model_list("free")}
+
+
+@router.get("/v3/models")
+async def list_models_v3():
+    """会员端点：premium_only"""
+    return {"object": "list", "data": _build_model_list("premium")}
 
 
 @router.get("/models")
 async def list_models_v0():
-    return await list_models()
+    return await list_models_v1()
 
 
 @router.post("/chat/completions")
 async def chat_completions_v0(
     req: ChatCompletionRequest | SimpleChatRequest, authorization: str = Header(None)
 ):
-    return await chat_completions(req, authorization)
+    return await _chat_completions(req, authorization, tier="free")

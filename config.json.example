@@ -9,14 +9,26 @@
     "jwt_secret": ""
   },
   "tabbit": {
-    "base_url": "https://web.tabbit.com",
-    "client_id": "2dd8eb4c1ed9c344d173"
+    "active_site": "intl",
+    "base_url": "https://web.tabbit.ai",
+    "client_id": "2dd8eb4c1ed9c344d173",
+    "sites": {
+      "intl": {
+        "label": "国际版",
+        "base_url": "https://web.tabbit.ai"
+      },
+      "cn": {
+        "label": "国内版",
+        "base_url": "https://web.tabbit.com"
+      }
+    }
   },
   "tokens": [
     {
       "id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
       "name": "my-account",
       "value": "<tabbit access token>",
+      "site": "intl",
       "enabled": true,
       "added_at": "2026-01-01T00:00:00Z",
       "last_used_at": null,
@@ -30,11 +42,11 @@
     "system_prompt": ""
   },
   "claude": {
-    "default_model": "best",
+    "default_model": "default",
     "system_prompt": ""
   },
   "openai": {
-    "default_model": "best"
+    "default_model": "default"
   },
   "agent": {
     "cleaner": {

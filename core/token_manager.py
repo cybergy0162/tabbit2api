@@ -19,15 +19,27 @@ class TokenManager:
 
     @property
     def has_tokens(self) -> bool:
-        return len(self.config.get("tokens", default=[])) > 0
+        return len(self._eligible_tokens()) > 0
 
-    def _get_available_tokens(self) -> list[dict]:
+    def _eligible_tokens(self, site: str | None = None) -> list[dict]:
+        """返回可用（enabled 且站点匹配）的 token 列表。site=None 用当前激活站点。"""
+        site = site or self.config.get_active_site()
         tokens = self.config.get("tokens", default=[])
-        now = time.time()
-        available = []
+        out = []
         for t in tokens:
             if not t.get("enabled", True):
                 continue
+            # 未标注站点的旧 token 视为国际版
+            t_site = t.get("site") or "intl"
+            if t_site != site:
+                continue
+            out.append(t)
+        return out
+
+    def _get_available_tokens(self, site: str | None = None) -> list[dict]:
+        now = time.time()
+        available = []
+        for t in self._eligible_tokens(site):
             cooldown_until = self._cooldowns.get(t["id"], 0)
             if now >= cooldown_until:
                 if t["id"] in self._cooldowns:
@@ -40,17 +52,19 @@ class TokenManager:
 
     def _get_client(self, token_info: dict) -> TabbitClient:
         tid = token_info["id"]
-        if tid not in self._clients:
+        # 站点切换后，若该 token 的 base_url 变了则重建客户端
+        base_url = self.config.get_site_base_url(token_info.get("site") or "intl")
+        if tid not in self._clients or getattr(self._clients[tid], "base_url", None) != base_url:
             self._clients[tid] = TabbitClient(
                 token_info["value"],
-                self.config.get("tabbit", "base_url"),
+                base_url,
                 self.config.get("tabbit", "client_id"),
             )
         return self._clients[tid]
 
-    async def get_next(self) -> tuple[Optional[dict], Optional[TabbitClient]]:
+    async def get_next(self, site: str | None = None) -> tuple[Optional[dict], Optional[TabbitClient]]:
         async with self._lock:
-            available = self._get_available_tokens()
+            available = self._get_available_tokens(site)
             if not available:
                 return None, None
             self._index = self._index % len(available)
@@ -87,6 +101,10 @@ class TokenManager:
     def remove_client(self, token_id: str):
         self._clients.pop(token_id, None)
         self._cooldowns.pop(token_id, None)
+
+    def invalidate_all_clients(self):
+        """站点切换后调用：丢弃所有已缓存客户端，下次按新 base_url 重建。"""
+        self._clients.clear()
 
     def get_token_status(self, token_id: str) -> str:
         now = time.time()
