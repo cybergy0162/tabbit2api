@@ -1,0 +1,15 @@
+{
+  "name": "tabbit2api-tools",
+  "version": "3.0.0",
+  "private": true,
+  "description": "Tabbit2API 工具脚本（Token 导出 / 刷新）的运行依赖",
+  "type": "module",
+  "scripts": {
+    "get-token": "node tools/get_tabbit_token.mjs",
+    "login-and-get-token": "node tools/login_and_get_token.mjs",
+    "refresh-fnos-token": "node tools/refresh_fnos_token.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.63.0"
+  }
+}

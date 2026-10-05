@@ -26,3 +26,5 @@ htmlcov/
 error_log*.txt
 tabb2-main.zip
 fetched_models.json
+node_modules/
+package-lock.json
