@@ -2,7 +2,7 @@
 /**
  * get_tabbit_token.mjs — 从本机已登录的 Tabbit 浏览器中导出 Tabbit2API 所需的 Access Token
  *
- * 跨平台：macOS / Windows / Linux。
+ * 跨平台：macOS / Windows。
  * 原理：Tabbit 基于 Chromium，登录后会在 `web.tabbit.ai`（或 `web.tabbit.com`）域下
  *       写入 `token` Cookie（一个 JWT）。本脚本用 Playwright 以「复制的已登录 profile」
  *       启动 Tabbit 内核，直接读取 Cookie，拼成 Tabbit2API 需要的
@@ -50,7 +50,7 @@ function profileCandidates() {
       join(roaming, 'Tabbit'),
     ];
   }
-  return [join(H, '.config/Tabbit'), join(H, '.config/tabbit')];
+  return [];
 }
 
 function detectProfile() {
@@ -154,7 +154,7 @@ const ctx = await chromium.launchPersistentContext(profileCopy, {
   headless: true,
   // 关键（macOS）：默认参数里的 --use-mock-keychain 会让 Chromium 用假钥匙串，
   // 读不出用真实 "<App> Safe Storage" 加密的 Cookie（整库被丢弃）。必须移除。
-  // Windows/Linux 上该参数本就不存在，移除是无害的 no-op。
+  // Windows 上该参数本就不存在，移除是无害的 no-op。
   ignoreDefaultArgs: ['--use-mock-keychain'],
   args: ['--no-first-run', '--no-default-browser-check'],
 });

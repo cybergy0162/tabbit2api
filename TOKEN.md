@@ -181,29 +181,20 @@ node tools/refresh_fnos_token.mjs
 
 > Windows 专有坑：Tabbit 的 Cookie 用「应用绑定加密」，**必须用 Tabbit 自带的 `Tabbit.exe` 启动**才能解密，脚本已自动处理。
 
-## 附录 B：Linux 用户
-
-profile 与内核路径因发行版而异，一般需手动指定：
-
-```bash
-cd ~/tabbit2api
-npm i -D playwright-core
-node tools/get_tabbit_token.mjs --app "/path/to/Tabbit" --profile "$HOME/.config/Tabbit"
-```
-
 ---
 
-## 附录 C：各平台默认路径速查
+## 附录 B：各平台默认路径速查
+
+> Tabbit 目前只有 macOS 与 Windows 客户端。
 
 | 平台 | profile 默认位置 | 内核 |
 |------|------------------|------|
 | macOS | `~/Library/Application Support/Tabbit` | `/Applications/Tabbit.app/Contents/MacOS/Tabbit`（自动） |
 | Windows | `%LOCALAPPDATA%\Tabbit\User Data` 等 | `%LOCALAPPDATA%\Programs\Tabbit\Tabbit.exe`（自动） |
-| Linux | `~/.config/Tabbit` | 用 `--app` 指定 |
 
 ---
 
-## 附录 D：进阶——手动从浏览器复制（不推荐）
+## 附录 C：进阶——手动从浏览器复制（不推荐）
 
 部分站点在标准浏览器登录时，可以手动取：
 

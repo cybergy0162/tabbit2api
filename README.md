@@ -21,7 +21,7 @@
 - **模型列表实时获取** —— `/v1/models`、`/v3/models` 与管理面板均**实时**从上游拉取，不再依赖任何预置/硬编码列表（上游新增模型自动出现）。
 - **统一默认模型 id 为 `default`** —— 修复上游因站点显示名（`Default` / `默认`）不同导致的 id 漂移；`best` / `最佳` / 空值均作为输入别名归一化为 `default`。
 - **移除失效的 Google 登录按钮** —— 面板内置的 Google 快捷登录用的是第三方 client_id，必然 `origin_mismatch`，已移除并改为「粘贴 Token / 脚本导出」引导。
-- **跨平台 Token 导出脚本** —— `tools/` 提供 macOS / Windows / Linux 自适应的 Token 导出与一键刷新脚本。
+- **跨平台 Token 导出脚本** —— `tools/` 提供 macOS / Windows 自适应的 Token 导出与一键刷新脚本。
 - **base_url 透传修复** —— 拉取模型目录时正确使用配置的 `base_url`（上游此 bug 会导致指定国际版域名时拉模型 422 / 列表为空）。
 - **数据集分离（站点级）** —— Token 池、模型缓存按站点隔离。
 - 管理面板版本号更新为 **v3.0**。
@@ -260,7 +260,7 @@ docker compose down && docker compose up -d --build  # 更新
 
 | 脚本 | 用途 |
 |------|------|
-| `get_tabbit_token.mjs` | 跨平台（macOS / Windows / Linux）从本机已登录的 Tabbit 导出 Access Token |
+| `get_tabbit_token.mjs` | 跨平台（macOS / Windows）从本机已登录的 Tabbit 导出 Access Token |
 | `login_and_get_token.mjs` | 打开可见窗口登录 Tabbit 并导出 Token（首次登录用） |
 | `refresh_fnos_token.mjs` | 一键闭环：导出 Token → 登录面板 → 写入/更新 → 刷新模型 → 验证 |
 
