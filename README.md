@@ -264,7 +264,16 @@ docker compose down && docker compose up -d --build  # 更新
 | `login_and_get_token.mjs` | 打开可见窗口登录 Tabbit 并导出 Token（首次登录用） |
 | `refresh_fnos_token.mjs` | 一键闭环：导出 Token → 登录面板 → 写入/更新 → 刷新模型 → 验证 |
 
-需要 `node >= 18` 与 `playwright-core`（`npm i -D playwright-core`）。详见 **[TOKEN.md](./TOKEN.md)**。
+需要 `node >= 18` 与 `playwright-core`。**在仓库目录**里安装并运行：
+
+```bash
+cd ~/tabbit2api                 # 先进仓库目录（重要：tools/ 是相对路径）
+npm i -D playwright-core        # 装一次
+node tools/get_tabbit_token.mjs # 导出 Token（先完全退出 Tabbit）
+```
+
+> 提示：`node tools/...` 是**相对路径**，只在你当前位于仓库目录时有效；也可用绝对路径 `node ~/tabbit2api/tools/get_tabbit_token.mjs`。
+> 详细图文步骤见 **[TOKEN.md](./TOKEN.md)**（保姆级 SOP）。
 
 ---
 
