@@ -209,16 +209,6 @@ export ANTHROPIC_API_KEY=any-key-here
 claude
 ```
 
-### Agent 集成
-
-| 平台 | 配置 |
-|------|------|
-| WorkBuddy / Trae / CodeBuddy | OpenAI Compatible Provider，BASE_URL = `http://your-server:8800/v1`（会员档用 `/v3`） |
-| Cherry Studio / ChatBox | 添加 OpenAI Provider |
-| Claude Code | `ANTHROPIC_BASE_URL=http://your-server:8800` |
-
-> 管理面板 Settings → 模型管理 → 点击「测试模型更新」→ 选择模型即可看到完整连接配置。
-
 ---
 
 ## 🎯 会话管理
