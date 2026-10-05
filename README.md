@@ -100,19 +100,86 @@ Tabbit 有两个官方站点，按地区分发、内置模型不同：
 
 ---
 
-## 📦 模型档位（实时目录）
+## 📦 模型档位与目录
 
 端点按「档位」隔离，档位来自上游 `model_access_type` 字段：
 
-| 档位 | 端点 | 说明 |
-|------|------|------|
-| `free_unlimited` | `/v1` | 默认模型（`default`），不消耗用量、无限使用 |
-| `free_metered` | `/v1` | 免费但有倍率消耗 |
-| `premium_only` | `/v3` | 会员专享 |
+| 档位 | 端点 | 徽章 | 说明 |
+|------|------|------|------|
+| `free_unlimited` | `/v1` | 默认 | 默认模型（`default`），不消耗用量、无限使用 |
+| `free_metered` | `/v1` | 免费 | 免费但有倍率消耗 |
+| `premium_only` | `/v3` | PRO | 会员专享 |
 
-- 具体有哪些模型**完全以运行时实时拉取的目录为准**（`/v1/models`、`/v3/models`），本 README 不固定列表。
-- 国际版与国内版的模型集合不同；切换站点后目录随之变化。
+- 「倍率」为上游 `display_multiplier`，数值越大单次消耗越多；`∞ (0.0)` 表示不计消耗。
+- 具体有哪些模型**以运行时实时拉取的目录为准**（`/v1/models`、`/v3/models`），下表为速查快照。
 - 会员档模型需要**有会员的账号**；免费账号调用 premium 模型会被上游拒绝（`code 492`）。
+
+### 🌍 国际版 `web.tabbit.ai`（32 个模型）
+
+| 模型 | 模型 id | 倍率 | 档位 |
+|------|---------|------|------|
+| Default | `default` | ∞ (0.0) | 默认 |
+| GPT-6 Luna | `gpt-6-luna` | ×0.1 | 免费 |
+| GPT-5.6 Luna | `gpt-5-6-luna` | ×0.1 | 免费 |
+| DeepSeek-V4-Flash | `deepseek-v4-flash` | ×0.1 | 免费 |
+| GLM-5.3-Flash | `glm-5-3-flash` | ×0.1 | 免费 |
+| DeepSeek-V4.1-Flash | `deepseek-v4-1-flash` | ×0.2 | 免费 |
+| MiniMax-M3 | `minimax-m3` | ×0.2 | 免费 |
+| Gemini-3.8-Flash | `gemini-3-8-flash` | ×0.4 | 免费 |
+| Gemini-3.7-Flash | `gemini-3-7-flash` | ×0.4 | 免费 |
+| GLM-5V-Turbo | `glm-5v-turbo` | ×0.4 | 免费 |
+| LongCat-2.0 | `longcat-2-0` | ×0.4 | 免费 |
+| Kimi-K2.7-Code | `kimi-k2-7-code` | ×0.5 | 免费 |
+| Kimi-K2.6 | `kimi-k2-6` | ×0.5 | 免费 |
+| Claude-Haiku-4.5 | `claude-haiku-4-5` | ×0.6 | 免费 |
+| GLM-5.3 | `glm-5-3` | ×0.7 | 免费 |
+| GLM-5.2 | `glm-5-2` | ×0.7 | 免费 |
+| DeepSeek-V4-Pro | `deepseek-v4-pro` | ×0.9 | 免费 |
+| Qwen3.8-Max | `qwen3-8-max` | ×0.9 | 免费 |
+| Qwen3.7-Max | `qwen3-7-max` | ×0.9 | 免费 |
+| Claude-Sonnet-5.5 | `claude-sonnet-5-5` | ×1.1 | 免费 |
+| GPT-6 Sol | `gpt-6-sol` | ×1.1 | PRO |
+| Claude-Sonnet-5 | `claude-sonnet-5` | ×1.1 | PRO |
+| GPT-5.6 Terra | `gpt-5-6-terra` | ×1.2 | PRO |
+| Gemini-3.1-Pro | `gemini-3-1-pro` | ×1.2 | PRO |
+| Claude-Sonnet-4.6 | `claude-sonnet-4-6` | ×1.7 | PRO |
+| Kimi-K3 | `kimi-k3` | ×1.7 | PRO |
+| Claude-Opus-5.5 | `claude-opus-5-5` | ×2.3 | PRO |
+| Claude-Opus-4.8 | `claude-opus-4-8` | ×2.8 | PRO |
+| Claude-Opus-4.7 | `claude-opus-4-7` | ×2.8 | PRO |
+| GPT-6 Astra | `gpt-6-astra` | ×2.9 | PRO |
+| GPT-5.6 Sol | `gpt-5-6-sol` | ×2.9 | PRO |
+| GPT-5.5 | `gpt-5-5` | ×2.9 | PRO |
+
+### 🇨🇳 国内版 `web.tabbit.com`（23 个模型）
+
+| 模型 | 模型 id | 倍率 | 档位 |
+|------|---------|------|------|
+| 默认 | `default` | ∞ (0.0) | 默认 |
+| MiMo-V2.6-Flash | `mimo-v2-6-flash` | ×0.1 | 免费 |
+| GLM-5.3-FlashX | `glm-5-3-flashx` | ×0.1 | 免费 |
+| GLM-5.3-Flash | `glm-5-3-flash` | ×0.1 | 免费 |
+| LongCat-2.0 | `longcat-2-0` | ×0.1 | 免费 |
+| Doubao-Seed-2.0-lite | `doubao-seed-2-0-lite` | ×0.1 | 免费 |
+| Qwen3.5-Plus | `qwen3-5-plus` | ×0.1 | 免费 |
+| MiMo-V2.6-Pro | `mimo-v2-6-pro` | ×0.2 | 免费 |
+| DeepSeek-V4.1-Flash | `deepseek-v4-1-flash` | ×0.2 | 免费 |
+| DeepSeek-V4-Flash | `deepseek-v4-flash` | ×0.2 | 免费 |
+| Doubao-Seed-2.1-Turbo | `doubao-seed-2-1-turbo` | ×0.2 | 免费 |
+| MiniMax-M3 | `minimax-m3` | ×0.2 | 免费 |
+| GLM-5.1 | `glm-5-1` | ×0.4 | 免费 |
+| GLM-5V-Turbo | `glm-5v-turbo` | ×0.4 | 免费 |
+| Kimi-K2.7-Code | `kimi-k2-7-code` | ×0.5 | 免费 |
+| Doubao-Seed-2.1-Pro | `doubao-seed-2-1-pro` | ×0.5 | 免费 |
+| Kimi-K2.6 | `kimi-k2-6` | ×0.5 | 免费 |
+| GLM-5.3 | `glm-5-3` | ×0.6 | 免费 |
+| DeepSeek-V4-Pro | `deepseek-v4-pro` | ×0.6 | 免费 |
+| GLM-5.2 | `glm-5-2` | ×0.6 | 免费 |
+| Qwen3.8-Max | `qwen3-8-max` | ×0.9 | 免费 |
+| Qwen3.7-Max | `qwen3-7-max` | ×0.9 | 免费 |
+| Kimi-K3 | `kimi-k3` | ×1.5 | PRO |
+
+> 快照时间：2026-10-04；倍率与档位可能随上游调整，请以面板实时目录为准。
 
 ---
 
