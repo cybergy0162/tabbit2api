@@ -871,7 +871,7 @@ async function _populatePreviewModelOptions(selected) {
     const all = [...(d1.data || []), ...(d2.data || [])];
     if (all.length) {
       const seen = new Set();
-      _cachedModels = all.filter(m => { if (seen.has(m.id)) return false; seen.add(m.id); return true; });
+      _cachedModels = _sortModels(all.filter(m => { if (seen.has(m.id)) return false; seen.add(m.id); return true; }));
       document.getElementById('modelListContainer')?.classList.remove('hidden');
     }
     const opts = _cachedModels.length ? _cachedModels : [{ id: selected || 'default', name: '' }];
@@ -980,7 +980,7 @@ async function testModelUpdate() {
     const d2 = await r2.json();
     const free = d1.data || [];
     const premium = d2.data || [];
-    _cachedModels = [...free, ...premium];
+    _cachedModels = _sortModels([...free, ...premium]);
 
     container.classList.remove('hidden');
     result.className = 'text-sm text-emerald-400';
@@ -1010,9 +1010,39 @@ function _renderModelGrid(grid) {
       class="flex items-center gap-2 rounded-lg border ${m.id === _selectedModel ? 'border-emerald-500 bg-zinc-700' : 'border-zinc-700 bg-zinc-800'} px-3 py-2 text-sm text-zinc-300 hover:border-zinc-500 hover:bg-zinc-700 transition-all text-left">
       <span class="text-xs w-4 text-center">${m.supports_vision ? '👁' : '💬'}</span>
       <span class="truncate">${esc(m.name || m.id)}</span>
-      ${_badge(m)}
+      ${_badge(m)}${_multChip(m)}
     </button>
   `).join('');
+}
+
+// 倍率小标（如 ×0.1；∞ 表示不计消耗）
+function _multChip(m) {
+  const v = (m && m.multiplier);
+  if (v === 0 || v === 0.0) return '<span class="shrink-0 rounded px-1 text-[10px] bg-sky-900/40 text-sky-300 font-mono">∞</span>';
+  if (v) return `<span class="shrink-0 rounded px-1 text-[10px] bg-sky-900/40 text-sky-300 font-mono">×${esc(String(v))}</span>`;
+  return '';
+}
+
+// 模型排序：倍率升序 → 名称 A-Z → 版本 大→小
+function _sortModels(list) {
+  const parse = (m) => {
+    const name = ((m && (m.name || m.id)) || '').trim();
+    const mt = name.match(/\d+(?:\.\d+)*/);
+    const ver = mt ? mt[0].split('.').map(Number) : [0];
+    while (ver.length < 4) ver.push(0);
+    const base = name.replace(/\d+(?:\.\d+)*/g, '').replace(/[\s_\-]+/g, ' ').trim().toLowerCase();
+    return { base, ver };
+  };
+  return [...list].sort((a, b) => {
+    const ma = (a && a.multiplier != null) ? a.multiplier : 999;
+    const mb = (b && b.multiplier != null) ? b.multiplier : 999;
+    if (ma !== mb) return ma - mb;
+    const pa = parse(a), pb = parse(b);
+    if (pa.base !== pb.base) return pa.base < pb.base ? -1 : 1;
+    for (let i = 0; i < 4; i++) { if (pa.ver[i] !== pb.ver[i]) return pb.ver[i] - pa.ver[i]; }
+    const na = ((a && (a.name || a.id)) || ''), nb = ((b && (b.name || b.id)) || '');
+    return na < nb ? -1 : na > nb ? 1 : 0;
+  });
 }
 
 // 三档徒章：default(默认/免费无限) · 免费批量 · PRO(会员)
