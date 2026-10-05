@@ -51,7 +51,9 @@ const API = '/api/admin';
 let token = localStorage.getItem('admin_token') || '';
 let currentPage = 'dashboard';
 let _cachedModels = [];
-let _selectedModel = 'best';
+let _selectedModel = 'default';
+let _siteInfo = { active_site: 'intl', sites: [] };
+let _settingsSites = {};
 let autoRefreshTimer = null;
 
 // ── Fetch helpers ──
@@ -161,7 +163,12 @@ function layout() {
     <aside class="w-56 border-r border-zinc-800 bg-zinc-950 flex flex-col fixed h-screen">
       <div class="p-5 border-b border-zinc-800">
         <h1 class="text-base font-semibold tracking-tight">Tabbit2API</h1>
-        <p class="text-xs text-zinc-500 mt-0.5">管理面板 <span class="text-emerald-500">v2.0</span></p>
+        <p class="text-xs text-zinc-500 mt-0.5">管理面板 <span class="text-emerald-500">v3.0</span></p>
+      </div>
+      <div class="px-3 pt-3">
+        <div class="flex rounded-lg bg-zinc-900 p-1 gap-1" id="siteSwitcher">
+          <div class="text-xs text-zinc-500 px-2 py-1">加载中…</div>
+        </div>
       </div>
       <nav class="flex-1 p-3 space-y-1" id="navList">
         ${navItems.map(n => `
@@ -192,6 +199,41 @@ function bindNav() {
   });
 }
 
+// ── 站点切换（国际版 / 国内版）──
+
+async function loadSiteSwitcher() {
+  const wrap = document.getElementById('siteSwitcher');
+  if (!wrap) return;
+  try {
+    _siteInfo = await api('/sites');
+  } catch { return; }
+  const sites = _siteInfo.sites || [];
+  wrap.innerHTML = sites.map(s => {
+    const active = s.key === _siteInfo.active_site;
+    return `<button onclick="switchSite('${s.key}')" title="${esc(s.base_url)} · ${s.token_count} 个 Token"
+      class="flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${active ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'}">
+      ${esc(s.label)}<span class="ml-1 text-[10px] ${active ? 'text-emerald-400' : 'text-zinc-500'}">${s.model_count || 0}</span>
+    </button>`;
+  }).join('');
+}
+
+async function switchSite(site) {
+  if (site === _siteInfo.active_site) return;
+  const info = (_siteInfo.sites || []).find(s => s.key === site) || {};
+  const label = info.label || site;
+  if (!confirm(`切换到「${label}」？\n将使用该站点的 Token 并刷新其模型目录。`)) return;
+  try {
+    const r = await api('/site/switch', { method: 'POST', body: JSON.stringify({ site, refresh: true }) });
+    _cachedModels = [];
+    _selectedModel = 'default';
+    await loadSiteSwitcher();
+    if (currentPage === 'settings') await renderSettings(document.getElementById('pageContent'));
+    alert(`已切换到「${label}」` + (r.model_count ? `（${r.model_count} 个模型）` : ''));
+  } catch (e) {
+    alert('切换失败: ' + e.message);
+  }
+}
+
 function logout() {
   token = '';
   localStorage.removeItem('admin_token');
@@ -203,6 +245,7 @@ function logout() {
 
 async function loadPage() {
   const el = document.getElementById('pageContent');
+  await loadSiteSwitcher();
   try {
     switch (currentPage) {
       case 'dashboard': await renderDashboard(el); break;
@@ -284,10 +327,6 @@ async function renderTokens(el) {
     <div class="flex items-center justify-between mb-6">
       <h2 class="text-2xl font-semibold">Tokens</h2>
       <div class="flex items-center gap-2">
-        <button onclick="showGoogleLogin()" class="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm hover:bg-zinc-800 transition-colors">
-          <svg class="w-4 h-4" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-          Google 登录获取
-        </button>
         <button onclick="showAddToken()" class="inline-flex items-center gap-2 rounded-lg bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-200 transition-colors">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
           手动添加
@@ -300,6 +339,7 @@ async function renderTokens(el) {
         <table class="w-full text-sm">
           <thead><tr class="text-zinc-400 text-left border-b border-zinc-800">
             <th class="px-5 py-3 font-medium">状态</th>
+            <th class="px-5 py-3 font-medium">站点</th>
             <th class="px-5 py-3 font-medium">名称</th>
             <th class="px-5 py-3 font-medium">Token</th>
             <th class="px-5 py-3 font-medium">请求数</th>
@@ -310,6 +350,7 @@ async function renderTokens(el) {
           <tbody>
             ${data.tokens.map(t => `<tr class="border-b border-zinc-800/50 hover:bg-zinc-800/30" data-id="${t.id}">
               <td class="px-5 py-3"><span class="status-dot status-${t.status}"></span></td>
+              <td class="px-5 py-3">${_siteBadge(t.site)}</td>
               <td class="px-5 py-3 font-medium">${esc(t.name)}</td>
               <td class="px-5 py-3 text-zinc-400 font-mono text-xs">${esc(t.value_preview)}</td>
               <td class="px-5 py-3">${t.total_requests}</td>
@@ -329,11 +370,18 @@ async function renderTokens(el) {
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                 </button>
               </td>
-            </tr>`).join('') || '<tr><td colspan="7" class="px-5 py-8 text-center text-zinc-500">尚未添加 Token</td></tr>'}
+            </tr>`).join('') || '<tr><td colspan="8" class="px-5 py-8 text-center text-zinc-500">尚未添加 Token</td></tr>'}
           </tbody>
         </table>
       </div>
     </div>`;
+}
+
+function _siteBadge(site) {
+  site = site || 'intl';
+  const label = (_siteInfo.sites || []).find(s => s.key === site)?.label || (site === 'cn' ? '国内版' : '国际版');
+  const cls = site === 'cn' ? 'bg-red-900/40 text-red-300' : 'bg-blue-900/40 text-blue-300';
+  return `<span class="rounded-full px-2 py-0.5 text-[10px] font-medium ${cls}">${esc(label)}</span>`;
 }
 
 function showAddToken() {
@@ -347,9 +395,21 @@ function showAddToken() {
           <input id="tkName" type="text" placeholder="例如: Account 1" class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500">
         </div>
         <div>
+          <label class="block text-sm text-zinc-400 mb-1.5">站点</label>
+          <select id="tkSite" class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100">
+            ${(_siteInfo.sites || []).map(s => `<option value="${s.key}" ${s.key === _siteInfo.active_site ? 'selected' : ''}>${esc(s.label)}（${esc(s.base_url)}）</option>`).join('')}
+          </select>
+          <p class="text-xs text-zinc-500 mt-1">Token 与站点绑定：国际版用 web.tabbit.ai 导出的 Token，国内版用 web.tabbit.com 导出的。</p>
+        </div>
+        <div>
           <label class="block text-sm text-zinc-400 mb-1.5">Token 值</label>
-          <textarea id="tkValue" rows="3" placeholder="JWT|NEXT_AUTH|DEVICE_ID" class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 resize-none"></textarea>
-          <p class="text-xs text-zinc-500 mt-1">格式: JWT 或 JWT|NEXT_AUTH 或 JWT|NEXT_AUTH|DEVICE_ID</p>
+          <textarea id="tkValue" rows="3" placeholder="eyJhbGciOiJSUzI1NiIs...（粘贴 JWT，或 JWT|next-auth.session-token）" class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 resize-none"></textarea>
+          <p class="text-xs text-zinc-500 mt-1">
+            用本机脚本获取：<code class="text-blue-300">node tools/get_tabbit_token.mjs</code>，把输出的整串粘到这里。
+          </p>
+          <p class="text-xs text-zinc-500 mt-1">
+            格式：<code>JWT</code> 或 <code>JWT|next-auth.session-token</code>（device_id 会自动生成，无需填写）。
+          </p>
         </div>
         <div class="flex justify-end gap-3 pt-2">
           <button type="button" onclick="closeModal()" class="rounded-lg border border-zinc-700 px-4 py-2 text-sm hover:bg-zinc-800 transition-colors">取消</button>
@@ -362,8 +422,9 @@ function showAddToken() {
     e.preventDefault();
     const name = document.getElementById('tkName').value.trim();
     const value = document.getElementById('tkValue').value.trim();
+    const site = document.getElementById('tkSite')?.value;
     if (!name || !value) return;
-    await api('/tokens', { method: 'POST', body: JSON.stringify({ name, value }) });
+    await api('/tokens', { method: 'POST', body: JSON.stringify({ name, value, site }) });
     closeModal();
     renderTokens(document.getElementById('pageContent'));
   };
@@ -371,118 +432,6 @@ function showAddToken() {
 
 function closeModal() {
   document.getElementById('tokenModal').innerHTML = '';
-}
-
-// ── Google 登录获取 Token ──
-
-const GOOGLE_CLIENT_ID = '448526856882-gks4gsvgspqkcdt8jsql5b5en0mk3v15.apps.googleusercontent.com';
-const TABBIT_ORIGIN = 'https://web.tabbit-ai.com';
-
-function showGoogleLogin() {
-  document.getElementById('tokenModal').innerHTML = `
-  <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onclick="if(event.target===this)closeModal()">
-    <div class="w-full max-w-lg rounded-xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl fade-in">
-      <h3 class="text-lg font-semibold mb-2">Google 登录获取 Token</h3>
-      <p class="text-sm text-zinc-400 mb-4">通过 Google 账号登录 Tabbit，自动获取可用的 Token。</p>
-      <div id="glStep1">
-        <div class="space-y-3">
-          <div>
-            <label class="block text-sm text-zinc-400 mb-1.5">Token 名称</label>
-            <input id="glName" type="text" placeholder="例如: Google Account 1" class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500">
-          </div>
-          <div class="rounded-lg bg-blue-950/40 border border-blue-900/50 p-3">
-            <p class="text-xs text-blue-300 font-medium mb-1.5">操作步骤</p>
-            <ol class="text-xs text-zinc-400 space-y-1 list-decimal list-inside">
-              <li>点击下方按钮，弹出 Google 登录窗口</li>
-              <li>在弹窗中 <b class="text-zinc-300">先按 F12</b> 打开开发者工具，切到 <b class="text-zinc-300">Network</b> 标签</li>
-              <li>选择 Google 账号完成登录</li>
-              <li>在 Network 中找到 <code class="text-blue-300">transform</code> 请求，点开 → <b class="text-zinc-300">Payload</b> → 复制 <code class="text-blue-300">id_token</code> 的值</li>
-              <li>粘贴到下方输入框，点提交</li>
-            </ol>
-          </div>
-          <button onclick="openGoogleOAuth()" class="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-zinc-100 px-4 py-2.5 text-sm font-medium text-zinc-900 hover:bg-zinc-200 transition-colors">
-            <svg class="w-4 h-4" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-            打开 Google 登录
-          </button>
-          <div>
-            <label class="block text-sm text-zinc-400 mb-1.5">粘贴 id_token</label>
-            <textarea id="glManualToken" rows="4" placeholder="eyJhbGciOiJSUzI1NiIs..." class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 font-mono resize-none"></textarea>
-          </div>
-          <button onclick="submitGoogleIdToken()" class="w-full rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600 transition-colors">提交并获取 Token</button>
-        </div>
-      </div>
-      <div id="glResult" style="display:none"></div>
-      <div class="flex justify-end pt-4 mt-4 border-t border-zinc-800">
-        <button onclick="closeModal()" class="rounded-lg border border-zinc-700 px-4 py-2 text-sm hover:bg-zinc-800 transition-colors">关闭</button>
-      </div>
-    </div>
-  </div>`;
-}
-
-function openGoogleOAuth() {
-  const params = new URLSearchParams({
-    client_id: GOOGLE_CLIENT_ID,
-    scope: 'openid email profile',
-    response_type: 'id_token',
-    redirect_uri: 'gis_transform',
-    response_mode: 'form_post',
-    origin: TABBIT_ORIGIN,
-    display: 'popup',
-    prompt: 'select_account',
-    gsiwebsdk: 'gis_attributes',
-  });
-  window.open(
-    'https://accounts.google.com/o/oauth2/v2/auth?' + params,
-    'google_login',
-    'width=520,height=700,left=200,top=80'
-  );
-}
-
-function submitGoogleIdToken() {
-  const val = document.getElementById('glManualToken').value.trim();
-  if (!val) return alert('请先粘贴 id_token');
-  exchangeGoogleToken(val);
-}
-
-async function exchangeGoogleToken(id_token) {
-  const step1 = document.getElementById('glStep1');
-  const result = document.getElementById('glResult');
-  step1.innerHTML = '<div class="flex items-center gap-3 py-6"><svg class="w-5 h-5 animate-spin text-zinc-400" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg><span class="text-sm text-zinc-300">正在换取 Tabbit Token...</span></div>';
-
-  try {
-    const data = await api('/tokens/google-login', {
-      method: 'POST',
-      body: JSON.stringify({ id_token })
-    });
-
-    step1.style.display = 'none';
-    result.style.display = 'block';
-
-    const name = (document.getElementById('glName') ? document.getElementById('glName').value.trim() : '') || 'Google Account';
-
-    result.innerHTML = `
-      <div class="rounded-lg bg-emerald-900/30 border border-emerald-800/50 p-4 mb-3">
-        <p class="text-sm text-emerald-400 font-medium mb-1">Token 获取成功!</p>
-        <p class="text-xs text-zinc-400 font-mono break-all">${esc(data.token_value).substring(0, 60)}...</p>
-      </div>
-      <button onclick="saveGoogleToken('${esc(name)}', '${esc(data.token_value)}')" class="w-full rounded-lg bg-zinc-100 px-4 py-2.5 text-sm font-medium text-zinc-900 hover:bg-zinc-200 transition-colors">
-        保存为 "${esc(name)}"
-      </button>`;
-  } catch (e) {
-    step1.style.display = 'none';
-    result.style.display = 'block';
-    result.innerHTML = `<div class="rounded-lg bg-red-900/30 border border-red-800/50 p-4"><p class="text-sm text-red-400">${esc(e.message)}</p></div>`;
-  }
-}
-
-async function saveGoogleToken(name, value) {
-  try {
-    await api('/tokens', { method: 'POST', body: JSON.stringify({ name, value }) });
-    closeModal();
-    renderTokens(document.getElementById('pageContent'));
-  } catch (e) {
-    alert('保存失败: ' + e.message);
-  }
 }
 
 async function testToken(id) {
@@ -746,11 +695,18 @@ async function renderSettings(el) {
       </div>
       <!-- Tabbit -->
       <div class="rounded-xl border border-zinc-800 bg-zinc-900 p-6">
-        <h3 class="text-sm font-medium text-zinc-300 mb-4">Tabbit 配置</h3>
+        <h3 class="text-sm font-medium text-zinc-300 mb-4">Tabbit 站点配置</h3>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label class="block text-sm text-zinc-400 mb-1.5">Base URL</label>
-            <input id="sBaseUrl" type="text" value="${esc(s.tabbit.base_url)}" class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100">
+            <label class="block text-sm text-zinc-400 mb-1.5">当前站点</label>
+            <select id="sSite" onchange="onSiteSelectChange()" class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100">
+              ${(s.sites ? Object.entries(s.sites) : []).map(([k,v]) => `<option value="${k}" ${k === s.active_site ? 'selected' : ''}>${esc(v.label || k)}（${esc(v.base_url)}）</option>`).join('')}
+            </select>
+            <p class="text-xs text-zinc-500 mt-1">切换站点后会使用该站点的 Token 并刷新其模型目录；Token 与站点绑定。</p>
+          </div>
+          <div>
+            <label class="block text-sm text-zinc-400 mb-1.5">Base URL（当前站点）</label>
+            <input id="sBaseUrl" type="text" value="${esc(s.active_base_url || s.tabbit.base_url)}" class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100">
           </div>
           <div>
             <label class="block text-sm text-zinc-400 mb-1.5">Client ID</label>
@@ -783,7 +739,7 @@ async function renderSettings(el) {
                 class="flex items-center gap-2 rounded-lg border ${m.id === _selectedModel ? 'border-emerald-500 bg-zinc-700' : 'border-zinc-700 bg-zinc-800'} px-3 py-2 text-sm text-zinc-300 hover:border-zinc-500 hover:bg-zinc-700 transition-all text-left">
                 <span class="text-xs w-4 text-center">${m.supports_vision ? '👁' : '💬'}</span>
                 <span class="truncate">${esc(m.name || m.id)}</span>
-                ${m.access_type === 'premium_only' ? '<span class="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] bg-amber-900/50 text-amber-400 font-medium">PRO</span>' : ''}
+                ${_badge(m)}
               </button>
             `).join('') : ''}
           </div>
@@ -897,10 +853,38 @@ async function renderSettings(el) {
         </div>
       </div>
     </div>`;
+  // 实时拉取模型目录填充下拉（不再硬编码）
+  await _populatePreviewModelOptions(_selectedModel);
 }
 // testModelUpdate is defined below (new version using /v1/models)
 
-const MODEL_OPTIONS = ['best','kimi-k3','longcat-2-0','glm-5-2','qwen3-7-max','kimi-k2-7-code','deepseek-v4-pro','deepseek-v4-flash','doubao-seed-2-1-pro','doubao-seed-2-1-turbo','minimax-m3','glm-5-1','glm-5v-turbo','kimi-k2-6','kimi-k2-5','minimax-m2-7','doubao-seed-2-0-lite','qwen3-5-plus','longcat-flash-chat','longcat-flash-thinking'];
+// 模型下拉：从 /v1/models + /v3/models 实时获取（不再硬编码）
+const MODEL_OPTIONS = ['default'];  // 占位，实际由 _populatePreviewModelOptions() 实时填充
+
+async function _populatePreviewModelOptions(selected) {
+  const sel = document.getElementById('previewModel');
+  if (!sel) return;
+  try {
+    const [r1, r2] = await Promise.all([fetch('/v1/models'), fetch('/v3/models')]);
+    const d1 = await r1.json().catch(() => ({}));
+    const d2 = await r2.json().catch(() => ({}));
+    const all = [...(d1.data || []), ...(d2.data || [])];
+    if (all.length) {
+      const seen = new Set();
+      _cachedModels = all.filter(m => { if (seen.has(m.id)) return false; seen.add(m.id); return true; });
+      document.getElementById('modelListContainer')?.classList.remove('hidden');
+    }
+    const opts = _cachedModels.length ? _cachedModels : [{ id: selected || 'default', name: '' }];
+    sel.innerHTML = opts.map(m => `<option value="${esc(m.id)}">${esc(m.id)}</option>`).join('');
+    const want = selected || _selectedModel || 'default';
+    if (opts.find(m => m.id === want)) sel.value = want;
+    else if (opts.length) sel.value = opts[0].id;
+    _selectedModel = sel.value;
+    updateConfigPreview();
+  } catch (e) {
+    sel.innerHTML = `<option value="default">default</option>`;
+  }
+}
 
 // ── 模型预览联动 ──
 
@@ -922,14 +906,14 @@ function getApiKey() {
 }
 
 function selectPreviewModel() {
-  const model = document.getElementById('previewModel')?.value || 'best';
+  const model = document.getElementById('previewModel')?.value || 'default';
   _selectedModel = model;
   document.getElementById('previewModelLabel').textContent = model;
   updateConfigPreview();
 }
 
 function updateConfigPreview() {
-  const model = document.getElementById('previewModel')?.value || 'best';
+  const model = document.getElementById('previewModel')?.value || 'default';
   _selectedModel = model;
   const host = getDisplayHost();
   const apiKey = getApiKey();
@@ -939,13 +923,11 @@ function updateConfigPreview() {
   // 标注模型类型
   const modelInfo = _cachedModels.find(m => m.id === model);
   if (modelInfo) {
-    const badge = modelInfo.access_type === 'premium_only' 
-      ? '<span class="text-[10px] bg-amber-900/50 text-amber-400 px-1.5 py-0.5 rounded-full align-middle">PRO</span>'
-      : '<span class="text-[10px] bg-zinc-700/50 text-zinc-500 px-1.5 py-0.5 rounded-full align-middle">免费</span>';
-    document.getElementById('previewModelLabel').innerHTML = model + ' ' + badge;
+    document.getElementById('previewModelLabel').innerHTML = model + ' ' + _badge(modelInfo);
   }
 
-  const openaiConfig = `OPENAI_BASE_URL=http://${host}/v1
+  const ep = _tierOf(modelInfo || { id: model });  // v1 = 免费档，v3 = 会员档
+  const openaiConfig = `OPENAI_BASE_URL=http://${host}/${ep}
 OPENAI_API_KEY=${apiKey}
 OPENAI_MODEL=${model}`;
   document.getElementById('previewOpenAI').textContent = openaiConfig;
@@ -993,13 +975,16 @@ async function testModelUpdate() {
   result.textContent = '';
 
   try {
-    const resp = await fetch('/v1/models');
-    const data = await resp.json();
-    _cachedModels = data.data || [];
+    const [r1, r2] = await Promise.all([fetch('/v1/models'), fetch('/v3/models')]);
+    const d1 = await r1.json();
+    const d2 = await r2.json();
+    const free = d1.data || [];
+    const premium = d2.data || [];
+    _cachedModels = [...free, ...premium];
 
     container.classList.remove('hidden');
     result.className = 'text-sm text-emerald-400';
-    result.textContent = `✅ 获取成功，共 ${_cachedModels.length} 个模型`;
+    result.textContent = `✅ 获取成功，共 ${_cachedModels.length} 个模型（/v1 免费 ${free.length} · /v3 会员 ${premium.length}）`;
 
     _renderModelGrid(grid);
     // 更新 preview 下拉列表
@@ -1025,9 +1010,21 @@ function _renderModelGrid(grid) {
       class="flex items-center gap-2 rounded-lg border ${m.id === _selectedModel ? 'border-emerald-500 bg-zinc-700' : 'border-zinc-700 bg-zinc-800'} px-3 py-2 text-sm text-zinc-300 hover:border-zinc-500 hover:bg-zinc-700 transition-all text-left">
       <span class="text-xs w-4 text-center">${m.supports_vision ? '👁' : '💬'}</span>
       <span class="truncate">${esc(m.name || m.id)}</span>
-      ${m.access_type === 'premium_only' ? '<span class="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] bg-amber-900/50 text-amber-400 font-medium">PRO</span>' : '<span class="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] bg-zinc-700/50 text-zinc-500 font-medium">免费</span>'}
+      ${_badge(m)}
     </button>
   `).join('');
+}
+
+// 三档徒章：default(默认/免费无限) · 免费批量 · PRO(会员)
+function _badge(m) {
+  const at = (m && m.access_type) || '';
+  if (at === 'premium_only') return '<span class="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] bg-amber-900/50 text-amber-400 font-medium">PRO /v3</span>';
+  if (at === 'free_unlimited') return '<span class="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] bg-emerald-900/50 text-emerald-400 font-medium">默认</span>';
+  return '<span class="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] bg-zinc-700/50 text-zinc-500 font-medium">免费</span>';
+}
+
+function _tierOf(m) {
+  return (m && m.access_type === 'premium_only') ? 'v3' : 'v1';
 }
 
 function selectModelFromGrid(modelId) {
@@ -1040,25 +1037,35 @@ function selectModelFromGrid(modelId) {
 
 async function saveSettings() {
   try {
-    await api('/settings', {
-      method: 'PUT',
-      body: JSON.stringify({
-        host: document.getElementById('sHost').value,
-        port: parseInt(document.getElementById('sPort').value),
-        base_url: document.getElementById('sBaseUrl').value,
-        client_id: document.getElementById('sClientId').value,
-        api_key: document.getElementById('sApiKey').value,
-        claude_default_model: document.getElementById('sClaudeModel').value,
-        openai_default_model: document.getElementById('sOpenaiModel').value,
-        openai_system_prompt: document.getElementById('sOpenaiPrompt').value,
-        claude_system_prompt: document.getElementById('sClaudePrompt').value,
-        max_entries: parseInt(document.getElementById('sMaxEntries').value),
-        session_enabled: document.getElementById('sSessionEnabled').value === 'true',
-        session_ttl: parseInt(document.getElementById('sSessionTTL').value) || 1800,
-      })
-    });
+    const body = {
+      host: document.getElementById('sHost').value,
+      port: parseInt(document.getElementById('sPort').value),
+      site: document.getElementById('sSite')?.value,
+      base_url: document.getElementById('sBaseUrl').value,
+      client_id: document.getElementById('sClientId').value,
+      api_key: document.getElementById('sApiKey').value,
+      openai_system_prompt: document.getElementById('sOpenaiPrompt').value,
+      claude_system_prompt: document.getElementById('sClaudePrompt').value,
+      max_entries: parseInt(document.getElementById('sMaxEntries').value),
+      session_enabled: document.getElementById('sSessionEnabled').value === 'true',
+      session_ttl: parseInt(document.getElementById('sSessionTTL').value) || 1800,
+    };
+    // 默认模型下拉可能存在也可能不存在，存在才提交
+    const cm = document.getElementById('sClaudeModel');
+    const om = document.getElementById('sOpenaiModel');
+    if (cm) body.claude_default_model = cm.value;
+    if (om) body.openai_default_model = om.value;
+    await api('/settings', { method: 'PUT', body: JSON.stringify(body) });
     alert('设置已保存（端口变更需重启生效）');
   } catch (e) { alert('保存失败: ' + e.message); }
+}
+
+function onSiteSelectChange() {
+  const sel = document.getElementById('sSite');
+  const site = sel?.value;
+  const info = (_siteInfo.sites || []).find(s => s.key === site);
+  const baseEl = document.getElementById('sBaseUrl');
+  if (info && baseEl) baseEl.value = info.base_url || '';
 }
 
 async function changePassword() {

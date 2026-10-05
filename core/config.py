@@ -11,13 +11,18 @@ DEFAULT_CONFIG = {
     "server": {"host": "0.0.0.0", "port": 8800},
     "admin": {"password_hash": "", "salt": "", "jwt_secret": ""},
     "tabbit": {
-        "base_url": "https://web.tabbit.com",
+        "active_site": "intl",
+        "base_url": "https://web.tabbit.ai",
         "client_id": "2dd8eb4c1ed9c344d173",
+        "sites": {
+            "intl": {"label": "国际版", "base_url": "https://web.tabbit.ai"},
+            "cn": {"label": "国内版", "base_url": "https://web.tabbit.com"},
+        },
     },
     "tokens": [],
     "proxy": {"api_key": "", "system_prompt": ""},
-    "claude": {"default_model": "best", "system_prompt": ""},
-    "openai": {"default_model": "best"},
+    "claude": {"default_model": "default", "system_prompt": ""},
+    "openai": {"default_model": "default"},
     "agent": {
         "cleaner": {"enabled": False},
         "context": {"enabled": False, "max_turns": 20, "threshold_ratio": 0.8},
@@ -58,6 +63,31 @@ def _apply_env_overrides(config: dict) -> dict:
     return config
 
 
+def _normalize_sites(config: dict) -> dict:
+    """确保 tabbit.sites / active_site / base_url 一致（向后兼容旧配置）。
+    - sites 缺失时用默认值补齐
+    - active_site 缺失时从当前 base_url 推断（含 tabbit.com → cn，否则 intl）
+    - 最后把 tabbit.base_url 同步为 active_site 的 base_url
+    """
+    tabbit = config.setdefault("tabbit", {})
+    defaults = DEFAULT_CONFIG["tabbit"]["sites"]
+    sites = tabbit.get("sites")
+    if not isinstance(sites, dict) or not sites:
+        sites = copy.deepcopy(defaults)
+    else:
+        sites = _deep_merge(copy.deepcopy(defaults), sites)
+    tabbit["sites"] = sites
+
+    active = tabbit.get("active_site")
+    if active not in sites:
+        # 从现有 base_url 推断
+        cur = str(tabbit.get("base_url") or "")
+        active = "cn" if "tabbit.com" in cur else "intl"
+    tabbit["active_site"] = active
+    tabbit["base_url"] = sites[active]["base_url"]
+    return config
+
+
 def _deep_merge(base: dict, override: dict) -> dict:
     result = base.copy()
     for key, value in override.items():
@@ -85,6 +115,7 @@ class ConfigManager:
             with open(self.path, "r", encoding="utf-8") as f:
                 saved = json.load(f)
             config = _deep_merge(copy.deepcopy(DEFAULT_CONFIG), saved)
+            config = _normalize_sites(config)
             config = _apply_env_overrides(config)
             self._save(config)
             return config
@@ -94,6 +125,7 @@ class ConfigManager:
         pw_hash, salt = hash_password("admin")
         config["admin"]["password_hash"] = pw_hash
         config["admin"]["salt"] = salt
+        config = _normalize_sites(config)
         config = _apply_env_overrides(config)
         self._save(config)
         return config
@@ -127,3 +159,31 @@ class ConfigManager:
             d = d.setdefault(k, {})
         d[keys[-1]] = value
         self.save()
+
+    # ── 站点（国际版/国内版）──
+
+    def get_active_site(self) -> str:
+        site = self.get("tabbit", "active_site", default="intl")
+        sites = self.get("tabbit", "sites", default={}) or {}
+        return site if site in sites else "intl"
+
+    def get_sites(self) -> dict:
+        return self.get("tabbit", "sites", default={}) or {}
+
+    def get_site_base_url(self, site: str | None = None) -> str:
+        site = site or self.get_active_site()
+        sites = self.get_sites()
+        if site in sites:
+            return sites[site].get("base_url")
+        return self.get("tabbit", "base_url", default="https://web.tabbit.ai")
+
+    def get_active_base_url(self) -> str:
+        return self.get_site_base_url(self.get_active_site())
+
+    def set_active_site(self, site: str):
+        """切换当前站点，并同步 tabbit.base_url。"""
+        sites = self.get_sites()
+        if site not in sites:
+            raise ValueError(f"unknown site: {site}")
+        self.set_val("tabbit", "active_site", site)
+        self.set_val("tabbit", "base_url", sites[site]["base_url"])

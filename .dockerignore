@@ -11,3 +11,5 @@ config.json
 docker-compose.yml
 Dockerfile
 .dockerignore
+tabbit2api-config.json
+*.bak

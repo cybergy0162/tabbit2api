@@ -14,7 +14,7 @@ from core.config import ConfigManager
 from core.token_manager import TokenManager
 from core.log_store import LogStore
 import core.tabbit_client as tabbit_client
-from core.tabbit_client import fetch_model_map, update_model_map, MODEL_MAP
+from core.tabbit_client import fetch_model_map_ex, update_model_map_for_site, activate_site, set_active_site_marker
 from routes import openai_compat, admin_api, claude_api
 
 logging.basicConfig(
@@ -33,41 +33,50 @@ admin_api.init(cfg, token_manager, log_store)
 claude_api.init(token_manager, cfg, log_store)
 
 
+async def _refresh_active_site_models():
+    """抓取当前激活站点的模型目录（用该站点的 token）。"""
+    site = cfg.get_active_site()
+    base_url = cfg.get_site_base_url(site)
+    tokens = [t for t in cfg.get("tokens", default=[])
+              if (t.get("site") or "intl") == site and t.get("value")]
+    if not tokens:
+        logger.warning(f"站点 {site} 下没有可用 token，跳过模型刷新")
+        return 0
+    new_models, meta = await fetch_model_map_ex(tokens[0]["value"], base_url)
+    if new_models:
+        update_model_map_for_site(site, new_models, meta)
+        set_active_site_marker(site)
+        activate_site(site)
+        logger.info(f"Updated model map (site={site}, {len(new_models)} models) from {base_url}")
+        return len(new_models)
+    return 0
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 启动时按配置激活站点（同步全局模型视图）
+    _init_site = cfg.get_active_site()
+    set_active_site_marker(_init_site)
+    activate_site(_init_site)
     logger.info(
-        "Tabbit2API started — tokens: %d, port: %d",
+        "Tabbit2API started — site: %s (%s), tokens: %d, port: %d",
+        _init_site,
+        cfg.get_active_base_url(),
         len(cfg.get("tokens", default=[])),
         cfg.get("server", "port", default=8800),
     )
-    
-    # 启动时立即更新模型列表
+
+    # 启动时立即更新当前站点模型列表
     try:
-        tokens = cfg.get("tokens", default=[])
-        if tokens:
-            token_str = tokens[0].get("value", "")
-            if token_str:
-                new_models = await fetch_model_map(token_str)
-                if new_models:
-                    tabbit_client.MODEL_MAP.clear()
-                    tabbit_client.MODEL_MAP.update(new_models)
-                    logger.info(f"Updated model map with {len(new_models)} models from Tabbit API on startup")
+        await _refresh_active_site_models()
     except Exception as e:
         logger.error(f"Failed to update model map on startup: {e}")
     
-    # 后台任务：定期更新模型列表
+    # 后台任务：定期更新当前站点模型列表
     async def update_models_periodically():
         while True:
             try:
-                tokens = cfg.get("tokens", default=[])
-                if tokens:
-                    token_str = tokens[0].get("value", "")
-                    if token_str:
-                        new_models = await fetch_model_map(token_str)
-                        if new_models:
-                            tabbit_client.MODEL_MAP.clear()
-                            tabbit_client.MODEL_MAP.update(new_models)
-                            logger.info(f"Updated model map with {len(new_models)} models from Tabbit API")
+                await _refresh_active_site_models()
             except Exception as e:
                 logger.error(f"Failed to update model map: {e}")
             await asyncio.sleep(3600)  # 每小时更新一次

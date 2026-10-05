@@ -13,7 +13,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
 
 from core.config import ConfigManager
-from core.tabbit_client import TabbitClient, MODEL_MAP
+from core.tabbit_client import TabbitClient, MODEL_MAP, get_model_access_type, TIERS_FREE, TIERS_PREMIUM
 from core.token_manager import TokenManager
 from core.log_store import LogStore, LogEntry
 from core.claude_compat import (
@@ -59,20 +59,41 @@ def init(token_manager: TokenManager, config: ConfigManager, log_store: LogStore
     _logs = log_store
 
 
-def _resolve_tabbit_model(model: str) -> tuple[str, str]:
-    """将请求中的模型名映射到 (model_id, display_name)"""
+def _tier_allows(tier: str, model_id: str) -> bool:
+    at = get_model_access_type(model_id)
+    if tier == "premium":
+        return at in TIERS_PREMIUM
+    return (at in TIERS_FREE) or (not at)
+
+
+def _resolve_tabbit_model(model: str, tier: str = "free") -> tuple[str, str]:
+    """将请求中的模型名映射到 (model_id, display_name)，并按端点档位校验。"""
+    # 归一化默认模型别名：best / 默认 → default
+    if model in ("best", "默认"):
+        model = "default"
     # 精确匹配
     if model in MODEL_MAP:
-        return model, MODEL_MAP[model]
-    # Claude 模型名映射
-    for prefix, target in CLAUDE_MODEL_MAP.items():
-        if model.startswith(prefix):
-            return target, MODEL_MAP.get(target, "最佳")
-    # 从 config 中读取默认模型
-    default = _cfg.get("claude", "default_model") if _cfg else None
-    if default and default in MODEL_MAP:
-        return default, MODEL_MAP[default]
-    return "best", "最佳"
+        mid = model
+    else:
+        mid = None
+        # Claude 模型名映射
+        for prefix, target in CLAUDE_MODEL_MAP.items():
+            if model.startswith(prefix):
+                mid = target
+                break
+        if mid is None:
+            # 从 config 中读取默认模型
+            default = _cfg.get("claude", "default_model") if _cfg else None
+            if default in ("best", "默认"):
+                default = "default"
+            mid = default if (default and default in MODEL_MAP) else "default"
+    if mid == "best":
+        mid = "default"
+    if not _tier_allows(tier, mid):
+        if tier == "premium":
+            raise HTTPException(400, f"模型 '{mid}' 属于免费档（默认/倍率），请使用 /v1/messages 端点")
+        raise HTTPException(400, f"模型 '{mid}' 属于会员档（需付费/会员），请使用 /v3/messages 端点")
+    return mid, MODEL_MAP.get(mid, "最佳")
 
 
 async def _get_client_and_token(
@@ -103,7 +124,7 @@ async def _get_client_and_token(
     if token not in _fallback_clients:
         _fallback_clients[token] = TabbitClient(
             token,
-            _cfg.get("tabbit", "base_url") if _cfg else None,
+            _cfg.get_active_base_url() if _cfg else None,
             _cfg.get("tabbit", "client_id") if _cfg else None,
         )
     return _fallback_clients[token], "bearer", ""
@@ -231,8 +252,17 @@ async def _stream_claude_response(
 
 
 @router.post("/v1/messages")
-async def claude_messages(request: Request):
-    """Anthropic Messages API 兼容端点"""
+async def claude_messages_v1(request: Request):
+    return await _claude_messages(request, tier="free")
+
+
+@router.post("/v3/messages")
+async def claude_messages_v3(request: Request):
+    return await _claude_messages(request, tier="premium")
+
+
+async def _claude_messages(request: Request, tier: str = "free"):
+    """Anthropic Messages API 兼容端点（按端点档位区分）"""
     try:
         body = await request.json()
     except Exception:
@@ -241,8 +271,8 @@ async def claude_messages(request: Request):
     # 获取客户端
     client, token_name, token_id = await _get_client_and_token(request)
 
-    # 模型映射
-    model_id, tabbit_model = _resolve_tabbit_model(body.get("model", "best"))
+    # 模型映射（含档位校验）
+    model_id, tabbit_model = _resolve_tabbit_model(body.get("model", "default"), tier=tier)
 
     # Check if premium model
     from routes.openai_compat import _is_premium_model
@@ -355,6 +385,15 @@ async def claude_messages(request: Request):
 @router.post("/v1/messages/count_tokens")
 async def count_tokens(request: Request):
     """Token 计数端点"""
+    return await _count_tokens(request)
+
+
+@router.post("/v3/messages/count_tokens")
+async def count_tokens_v3(request: Request):
+    return await _count_tokens(request)
+
+
+async def _count_tokens(request: Request):
     try:
         body = await request.json()
     except Exception:

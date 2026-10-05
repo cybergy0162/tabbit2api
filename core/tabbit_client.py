@@ -11,9 +11,21 @@ import asyncio
 from typing import AsyncGenerator, Optional
 
 import httpx
+import logging
+
+logger = logging.getLogger("tabbit2openai")
+
+# ── 模型档位元数据 ──
+# key = model_id, value = {access_type, multiplier, description, ...}
+# access_type: free_unlimited(默认/免费无限) | free_metered(免费计量) | premium_only(会员/付费)
+MODEL_META: dict[str, dict] = {}
+
+# ── 按站点缓存（国际版 intl / 国内版 cn）──
+MODEL_MAP_BY_SITE: dict[str, dict] = {"intl": {}, "cn": {}}
+MODEL_META_BY_SITE: dict[str, dict] = {"intl": {}, "cn": {}}
 
 MODEL_MAP = {
-    "best": "最佳",
+    "default": "最佳",  # 默认模型（免费无限）；输入别名 best 会被归一化为此 id
     "kimi-k3": "Kimi-K3",
     "longcat-2-0": "LongCat-2.0",
     "glm-5-2": "GLM-5.2",
@@ -36,38 +48,59 @@ MODEL_MAP = {
 }
 
 
-async def fetch_model_map(token_str: str) -> dict:
-    import logging
+async def fetch_model_map(token_str: str, base_url: str | None = None) -> dict:
+    """向后兼容：只返回 models 字典（同时更新全局 MODEL_META）。"""
+    models, _meta = await fetch_model_map_ex(token_str, base_url)
+    return models
+
+
+async def fetch_model_map_ex(token_str: str, base_url: str | None = None) -> tuple[dict, dict]:
+    """抓取模型目录，返回 (models, meta)。meta 为每模型档位元数据。"""
     logger = logging.getLogger("tabbit2openai")
-    client = TabbitClient(token_str)
+    client = TabbitClient(token_str, base_url=base_url)
     try:
         # 直接访问模型配置接口，无需创建会话
         url = f"{client.base_url}/proxy/v1/model_config/models"
         logger.info(f"Fetching models from: {url}")
         resp = await client.client.get(
             url,
-            params={"a": "0", "scene": "generate_image"},
             headers=client._get_headers("/proxy/v1/model_config/models"),
             cookies=client._get_cookies(),
         )
         logger.info(f"Response status: {resp.status_code}")
         if resp.status_code != 200:
             logger.error(f"Failed to fetch models: {resp.status_code}")
-            return {}
+            return {}, {}
         data = resp.json()
         models = {}
-        name_to_id = {'默认': 'best', 'Kimi-K3': 'kimi-k3', 'LongCat-2.0': 'longcat-2-0', 'GLM-5.2': 'glm-5-2', 'Qwen3.7-Max': 'qwen3-7-max', 'Kimi-K2.7-Code': 'kimi-k2-7-code', 'DeepSeek-V4-Pro': 'deepseek-v4-pro', 'DeepSeek-V4-Flash': 'deepseek-v4-flash', 'Doubao-Seed-2.1-Pro': 'doubao-seed-2-1-pro', 'Doubao-Seed-2.1-Turbo': 'doubao-seed-2-1-turbo', 'MiniMax-M3': 'minimax-m3', 'GLM-5.1': 'glm-5-1', 'GLM-5V-Turbo': 'glm-5v-turbo', 'Kimi-K2.6': 'kimi-k2-6', 'Kimi-K2.5': 'kimi-k2-5', 'MiniMax-M2.7': 'minimax-m2-7', 'Doubao-Seed-2.0-lite': 'doubao-seed-2-0-lite', 'Qwen3.5-Plus': 'qwen3-5-plus', 'LongCat-Flash-Chat': 'longcat-flash-chat', 'LongCat-Flash-Thinking': 'longcat-flash-thinking'}
+        name_to_id = {'默认': 'default', 'Default': 'default', 'Kimi-K3': 'kimi-k3', 'LongCat-2.0': 'longcat-2-0', 'GLM-5.2': 'glm-5-2', 'Qwen3.7-Max': 'qwen3-7-max', 'Kimi-K2.7-Code': 'kimi-k2-7-code', 'DeepSeek-V4-Pro': 'deepseek-v4-pro', 'DeepSeek-V4-Flash': 'deepseek-v4-flash', 'Doubao-Seed-2.1-Pro': 'doubao-seed-2-1-pro', 'Doubao-Seed-2.1-Turbo': 'doubao-seed-2-1-turbo', 'MiniMax-M3': 'minimax-m3', 'GLM-5.1': 'glm-5-1', 'GLM-5V-Turbo': 'glm-5v-turbo', 'Kimi-K2.6': 'kimi-k2-6', 'Kimi-K2.5': 'kimi-k2-5', 'MiniMax-M2.7': 'minimax-m2-7', 'Doubao-Seed-2.0-lite': 'doubao-seed-2-0-lite', 'Qwen3.5-Plus': 'qwen3-5-plus', 'LongCat-Flash-Chat': 'longcat-flash-chat', 'LongCat-Flash-Thinking': 'longcat-flash-thinking'}
+        meta: dict[str, dict] = {}
         for item in data.get("models", []):
             display_name = item.get("display_name", "")
             if display_name:
-                # 使用映射表中的 ID，如果没有则使用 display_name
                 model_id = name_to_id.get(display_name, display_name.lower().replace(" ", "-").replace(".", "-"))
                 models[model_id] = display_name
+                meta[model_id] = {
+                    "id": model_id,
+                    "display_name": display_name,
+                    "access_type": item.get("model_access_type") or "free_metered",
+                    "multiplier": item.get("display_multiplier"),
+                    "description": item.get("description"),
+                    "supports_vision": bool(item.get("supports_images", False)),
+                    "supports_tools": bool(item.get("supports_tools", False)),
+                    "support_thinking": bool(item.get("support_thinking", False)),
+                    "label": item.get("display_label"),
+                    "sunset_soon": bool(item.get("sunset_soon", False)),
+                }
         logger.info(f"Found {len(models)} models from Tabbit API")
-        return models
+        if meta:
+            MODEL_META.clear()
+            MODEL_META.update(meta)
+            logger.info(f"Captured model meta for {len(meta)} models")
+        return models, meta
     except Exception as e:
         logger.error(f"Error fetching models: {e}")
-        return {}
+        return {}, {}
     finally:
         await client.close()
 
@@ -78,6 +111,53 @@ def update_model_map(new_models: dict):
     # Clear and update to ensure all references see the changes
     MODEL_MAP.clear()
     MODEL_MAP.update(new_models)
+
+
+def activate_site(site: str):
+    """把全局 MODEL_MAP/MODEL_META 切换为指定站点缓存的目录。"""
+    global MODEL_MAP, MODEL_META
+    if site not in MODEL_MAP_BY_SITE:
+        return
+    MODEL_MAP.clear()
+    MODEL_MAP.update(MODEL_MAP_BY_SITE.get(site, {}))
+    MODEL_META.clear()
+    MODEL_META.update(MODEL_META_BY_SITE.get(site, {}))
+    logger.info(f"Activated site '{site}': {len(MODEL_MAP)} models")
+
+
+def update_model_map_for_site(site: str, new_models: dict, meta: dict | None = None):
+    """写入指定站点的模型缓存，并在该站点为当前站点时同步全局。"""
+    MODEL_MAP_BY_SITE[site] = dict(new_models)
+    if meta is not None:
+        MODEL_META_BY_SITE[site] = dict(meta)
+    if _ACTIVE_SITE[0] == site:
+        activate_site(site)
+
+
+_ACTIVE_SITE = ["intl"]
+
+
+def set_active_site_marker(site: str):
+    _ACTIVE_SITE[0] = site
+
+
+def get_model_access_type(model_id: str) -> str:
+    """返回模型的档位：free_unlimited | free_metered | premium_only。
+    优先取上游实时元数据（MODEL_META），兜底为免费计量。"""
+    m = MODEL_META.get(model_id)
+    if m and m.get("access_type"):
+        return m["access_type"]
+    if model_id in ("best", "default"):
+        return "free_unlimited"
+    # 兜底：以 "default" 开头/结尾的别名（如 default-xxx）也视为默认档
+    if model_id.endswith("default") or model_id.startswith("default"):
+        return "free_unlimited"
+    return "free_metered"
+
+
+# 端点档位：/v1 = 默认(免费无限) + 免费计量；/v3 = 会员档
+TIERS_FREE = {"free_unlimited", "free_metered"}
+TIERS_PREMIUM = {"premium_only"}
 
 
 class TabbitClient:
@@ -95,7 +175,7 @@ class TabbitClient:
         
         self.client = httpx.AsyncClient(
             timeout=httpx.Timeout(connect=15, read=180, write=30, pool=30),
-            follow_redirects=False,
+            follow_redirects=True,
             verify=False,
             limits=httpx.Limits(
                 max_connections=10,
@@ -214,7 +294,9 @@ class TabbitClient:
             cookies=self._get_cookies(),
         )
         if rsc_resp.status_code != 200:
-            raise Exception(f"RSC init error {rsc_resp.status_code}")
+            # RSC 预热是可选的：部分部署返回 307/500，但会话仍可直接用于
+            # /api/v1/chat/completion（已实测）。仅告警，不中断。
+            logger.warning(f"RSC init returned {rsc_resp.status_code}; continuing anyway")
         
         return session_id
 
