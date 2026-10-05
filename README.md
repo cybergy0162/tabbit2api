@@ -268,10 +268,11 @@ docker compose down && docker compose up -d --build  # 更新
 
 ```bash
 cd ~/tabbit2api                 # 先进仓库目录（重要：tools/ 是相对路径）
-npm i -D playwright-core        # 装一次
+npm install                     # 装一次（package.json 已声明依赖）
 node tools/get_tabbit_token.mjs # 导出 Token（先完全退出 Tabbit）
 ```
 
+> 快捷命令：`npm run get-token` / `npm run login-and-get-token` / `npm run refresh-fnos-token`。
 > 提示：`node tools/...` 是**相对路径**，只在你当前位于仓库目录时有效；也可用绝对路径 `node ~/tabbit2api/tools/get_tabbit_token.mjs`。
 > 详细图文步骤见 **[TOKEN.md](./TOKEN.md)**（保姆级 SOP）。
 

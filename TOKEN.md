@@ -20,13 +20,13 @@
 
 ## 1. 准备：装一次依赖（只做一次）
 
-**① 确认你已经把源码放到了电脑上**，假设路径是：
+**① 把源码放到电脑上**，并确认路径。本教程统一用：
 
 ```
 ~/tabbit2api
 ```
 
-（如果你解压在别处，把下面所有 `~/tabbit2api` 换成你的实际路径。）
+（放在别处也行，下文把它们都换成你的实际路径。）
 
 **② 打开终端，进入仓库目录：**
 
@@ -34,16 +34,17 @@
 cd ~/tabbit2api
 ```
 
-> 不知道自己放哪了？在 Finder 里进入该文件夹，按 `⌥ + ⌘ + C` 可复制路径，再 `cd` 过去。
+> 不知道自己放哪了？在 Finder 里进入该文件夹，按 `⌥ + ⌘ + C` 复制路径，再 `cd` 过去。
 
 **③ 安装依赖（装一次就够）：**
 
 ```bash
-npm i -D playwright-core
+npm install
 ```
 
 看到 `added 1 package` 之类就成功了。
-> 这一步会生成 `node_modules` 文件夹。依赖装在**仓库目录**里，脚本才能找到它。
+> 仓库自带的 `package.json` 已声明所需依赖 `playwright-core`，`npm install` 会自动装好并生成 `node_modules`。
+> （旧版本没有 `package.json` 时，可改用 `npm i -D playwright-core`。）
 
 **④ 确认 Node 已安装：**
 
@@ -88,10 +89,11 @@ pwd
 **然后运行：**
 
 ```bash
+cd ~/tabbit2api
 node tools/get_tabbit_token.mjs
 ```
 
-成功时你会看到类似输出：
+> 等价快捷方式：`npm run get-token`（需先 `npm install`）。
 
 ```
 平台: darwin
@@ -139,6 +141,8 @@ node tools/get_tabbit_token.mjs \
 cd ~/tabbit2api
 node tools/refresh_fnos_token.mjs
 ```
+
+> 等价快捷方式：`npm run refresh-fnos-token`。
 
 - 第一次会问你要**面板地址**和 **admin 密码**，并记住，下次不用再输。
 - 面板地址可以只写 IP，如 `192.168.1.102`，脚本会自动补成 `http://192.168.1.102:8800`。
