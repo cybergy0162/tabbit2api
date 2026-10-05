@@ -60,21 +60,9 @@ docker compose up -d
 
 服务默认监听 `http://localhost:8800`。
 
-### 端口说明
+---
 
-| 地址 | 说明 |
-|------|------|
-| `http://localhost:8800/v1/chat/completions` | OpenAI 兼容端点（免费档） |
-| `http://localhost:8800/v1/models` | 免费档模型列表（实时） |
-| `http://localhost:8800/v3/chat/completions` | OpenAI 兼容端点（会员档） |
-| `http://localhost:8800/v3/models` | 会员档模型列表（实时） |
-| `http://localhost:8800/v1/messages` | Claude 兼容端点（免费档） |
-| `http://localhost:8800/v3/messages` | Claude 兼容端点（会员档） |
-| `http://localhost:8800/admin` | 管理面板（默认密码 `admin`） |
-| `http://localhost:8800/health` | 健康检查 |
-
-> `/models` 与 `/chat/completions` 为无前缀的兼容别名（等同 `/v1/*`）。
-> 跨档调用会返回 `400`，例如用 `/v1` 调会员模型会提示「请使用 /v3 端点」。
+## 🚀 管理面板配置
 
 ### 添加 Tabbit Token
 
@@ -82,6 +70,59 @@ docker compose up -d
 获取方法见 **[TOKEN.md](./TOKEN.md)**（也可用 `tools/get_tabbit_token.mjs` 一键导出）。
 
 > ⚠️ **Token 与站点绑定**：国际版账号导出的 Token 只能用于国际版站点，国内版同理。添加 Token 时请在表单里选对**站点**。
+
+### 🎯 会话管理
+
+| 机制 | 说明 |
+|------|------|
+| **自动缓存** | 同一 API Key + 模型自动共享 Tabbit room，保持对话记忆 |
+| **永久会话** | 默认 TTL 7 天，room 在 Tabbit 对话列表中持久可见 |
+| **固定绑定** | 手动绑定 Tabbit room → API Key，实现真正永久对话 |
+| **并发锁** | 同 room 请求排队，防止 409 Conflict |
+| **智能消息** | 自动过滤 WorkBuddy 标题生成指令，从超长消息提取真实问题 |
+| **429 重试** | 触发限流后自动等待重试 |
+
+### 会话管理面板
+
+- **Sessions 页面**：查看所有活跃会话、请求次数、TTL 剩余时间
+- **固定绑定**：输入 API Key + 模型 + Room ID，永久绑定
+- **单个删除 / 全部清除**
+
+
+### 🔧 配置
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| 服务地址 | `0.0.0.0:8800` | 监听地址与端口 |
+| 激活站点 | `intl` | `intl`（国际版 `web.tabbit.ai`）/ `cn`（国内版 `web.tabbit.com`） |
+| 站点域名 | 见 `tabbit.sites` | 每个站点的 `base_url`，可在面板修改 |
+| API Key | 空 | 全局鉴权（可选） |
+| 默认模型 | `default` | OpenAI / Claude 默认模型（`best` 为别名） |
+| 会话缓存 | 启用 / 604800s TTL | 可关闭或调整 |
+
+> 站点、Token 均可在**管理面板**中修改，无需手改 `config.json`。
+
+### 环境变量
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `TABBIT_SERVER_HOST` | 监听地址 | `0.0.0.0` |
+| `TABBIT_SERVER_PORT` | 监听端口 | `8800` |
+| `TABBIT_BASE_URL` | Tabbit 域名 | `https://web.tabbit.ai` |
+| `TABBIT_CLIENT_ID` | 客户端 id | `2dd8eb4c1ed9c344d173` |
+| `TABBIT_API_KEY` | 全局 API Key | 空 |
+| `TABBIT_CLAUDE_DEFAULT_MODEL` | Claude 默认模型 | `default` |
+| `TABBIT_OPENAI_DEFAULT_MODEL` | OpenAI 默认模型 | `default` |
+
+### Agent 功能开关（管理面板 Settings 页面）
+
+| 功能 | 说明 |
+|------|------|
+| **消息清洗** | 过滤伪请求、去重系统消息、提取 `<user_query>` |
+| **上下文管理** | 滑动窗口截断，防止超长上下文 |
+| **Token 池** | 多账户轮询 + 状态机健康管理 |
+| **Agent 路由** | 按 Agent 阶段选择模型 |
+| **Tool Calling** | 解析并注入工具定义 |
 
 ---
 
@@ -181,89 +222,23 @@ Tabbit 有两个官方站点，按地区分发、内置模型不同：
 
 ---
 
-## 🔌 API 使用
+## 🔌 客户端使用
 
-### OpenAI 兼容
+### 端口说明
 
-```bash
-# 免费档
-curl http://localhost:8800/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer sk-your-key" \
-  -d '{"model": "default", "messages": [{"role": "user", "content": "你好！"}], "stream": true}'
-
-# 会员档（需会员账号）
-curl http://localhost:8800/v3/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer sk-your-key" \
-  -d '{"model": "<premium-model-id>", "messages": [{"role": "user", "content": "你好！"}], "stream": true}'
-```
-
-> `model` 可省略或填 `default`（默认模型），也可填模型列表里的具体 id。
-
-### Claude Code
-
-```bash
-export ANTHROPIC_BASE_URL=http://localhost:8800
-export ANTHROPIC_API_KEY=any-key-here
-claude
-```
-
----
-
-## 🎯 会话管理
-
-| 机制 | 说明 |
+| 地址 | 说明 |
 |------|------|
-| **自动缓存** | 同一 API Key + 模型自动共享 Tabbit room，保持对话记忆 |
-| **永久会话** | 默认 TTL 7 天，room 在 Tabbit 对话列表中持久可见 |
-| **固定绑定** | 手动绑定 Tabbit room → API Key，实现真正永久对话 |
-| **并发锁** | 同 room 请求排队，防止 409 Conflict |
-| **智能消息** | 自动过滤 WorkBuddy 标题生成指令，从超长消息提取真实问题 |
-| **429 重试** | 触发限流后自动等待重试 |
+| `http://localhost:8800/v1/chat/completions` | OpenAI 兼容端点（免费档） |
+| `http://localhost:8800/v1/models` | 免费档模型列表（实时） |
+| `http://localhost:8800/v3/chat/completions` | OpenAI 兼容端点（会员档） |
+| `http://localhost:8800/v3/models` | 会员档模型列表（实时） |
+| `http://localhost:8800/v1/messages` | Claude 兼容端点（免费档） |
+| `http://localhost:8800/v3/messages` | Claude 兼容端点（会员档） |
+| `http://localhost:8800/admin` | 管理面板（默认密码 `admin`） |
+| `http://localhost:8800/health` | 健康检查 |
 
-### 会话管理面板
-
-- **Sessions 页面**：查看所有活跃会话、请求次数、TTL 剩余时间
-- **固定绑定**：输入 API Key + 模型 + Room ID，永久绑定
-- **单个删除 / 全部清除**
-
----
-
-## 🔧 配置
-
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| 服务地址 | `0.0.0.0:8800` | 监听地址与端口 |
-| 激活站点 | `intl` | `intl`（国际版 `web.tabbit.ai`）/ `cn`（国内版 `web.tabbit.com`） |
-| 站点域名 | 见 `tabbit.sites` | 每个站点的 `base_url`，可在面板修改 |
-| API Key | 空 | 全局鉴权（可选） |
-| 默认模型 | `default` | OpenAI / Claude 默认模型（`best` 为别名） |
-| 会话缓存 | 启用 / 604800s TTL | 可关闭或调整 |
-
-> 站点、Token 均可在**管理面板**中修改，无需手改 `config.json`。
-
-### 环境变量
-
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `TABBIT_SERVER_HOST` | 监听地址 | `0.0.0.0` |
-| `TABBIT_SERVER_PORT` | 监听端口 | `8800` |
-| `TABBIT_BASE_URL` | Tabbit 域名 | `https://web.tabbit.ai` |
-| `TABBIT_CLIENT_ID` | 客户端 id | `2dd8eb4c1ed9c344d173` |
-| `TABBIT_API_KEY` | 全局 API Key | 空 |
-| `TABBIT_CLAUDE_DEFAULT_MODEL` | Claude 默认模型 | `default` |
-| `TABBIT_OPENAI_DEFAULT_MODEL` | OpenAI 默认模型 | `default` |
-
-### Agent 功能开关（管理面板 Settings 页面）
-
-| 功能 | 说明 |
-|------|------|
-| **消息清洗** | 过滤伪请求、去重系统消息、提取 `<user_query>` |
-| **上下文管理** | 滑动窗口截断，防止超长上下文 |
-| **Token 池** | 多账户轮询 + 状态机健康管理 |
-| **Agent 路由** | 按 Agent 阶段选择模型 |
-| **Tool Calling** | 解析并注入工具定义 |
+> `/models` 与 `/chat/completions` 为无前缀的兼容别名（等同 `/v1/*`）。
+> 跨档调用会返回 `400`，例如用 `/v1` 调会员模型会提示「请使用 /v3 端点」。
 
 ---
 
