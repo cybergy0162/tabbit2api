@@ -50,7 +50,7 @@
 
 ---
 
-## 🚀 快速开始
+## 🚀 Docker 容器化部署
 
 ```bash
 git clone <this-repo>
@@ -199,7 +199,7 @@ curl http://localhost:8800/v3/chat/completions \
   -d '{"model": "<premium-model-id>", "messages": [{"role": "user", "content": "你好！"}], "stream": true}'
 ```
 
-> `model` 可省略或填 `default`（默认模型）、`best`（`default` 的别名）；也可填 `/v1/models` 里的具体 id。
+> `model` 可省略或填 `default`（默认模型），也可填模型列表里的具体 id。
 
 ### Claude Code
 
