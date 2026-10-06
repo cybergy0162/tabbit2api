@@ -509,11 +509,14 @@ async def _chat_completions(
             raw_model = (req.model or _cfg.get("openai", "default_model", default="default")) if _cfg else (req.model or "default")
             model_id = _resolve_tier(tier, raw_model)
 
-            # Agent router: detect phase and potentially remap model
+            # Agent router: 仅在显式相位信号（X-Agent-Phase 头 / -reasoning 等后缀）下参与选型；
+            # 明确指定的模型绝不被静默改写。
             agent_config = _cfg.get("agent", default={}) if _cfg else {}
             if agent_config.get("router", {}).get("enabled", False):
                 selector = ModelSelector()
-                model_id = _resolve_tier(tier, selector.resolve(model_id))
+                remapped = selector.resolve(model_id)
+                if remapped == model_id or _tier_allows(tier, remapped):
+                    model_id = remapped
 
             tabbit_model = tabbit_client.MODEL_MAP.get(model_id, model_id)
 

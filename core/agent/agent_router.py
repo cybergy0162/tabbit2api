@@ -91,16 +91,26 @@ class ModelSelector:
         """Mark a model as healthy."""
         self._health[model_id] = True
 
-    def resolve(self, request_model: str, headers: Optional[dict] = None) -> str:
+    def resolve(self, request_model: str, headers: Optional[dict] = None, allow_remap: bool = True) -> str:
         """Full resolve: detect phase + select model.
+
+        仅当客户端**显式要求相位路由**时才改写模型：
+          - 带 `X-Agent-Phase` 头，或
+          - 模型 id 带 `-reasoning` / `-summary` / `-tool` 后缀。
+        否则**原样返回**请求的模型，绝不静默改写（避免"选什么模型都变成同一个"）。
 
         Args:
             request_model: the model ID from the API request
             headers: optional HTTP headers dict
+            allow_remap: 兼容旧签名；False 时同样仅在显式相位下才路由。
 
         Returns:
             resolved model ID
         """
+        has_header = bool(headers and headers.get("x-agent-phase"))
+        has_suffix = any(p.search(request_model) for p in SUFFIX_PATTERNS.values())
+        if not (allow_remap and (has_header or has_suffix)):
+            return request_model
         phase = self.detect_phase(request_model, headers)
         selected = self.select_model(phase, preferred=request_model)
         if selected != request_model:
