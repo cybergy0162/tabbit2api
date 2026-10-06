@@ -423,6 +423,7 @@ def _resolve_tier(tier: str, model_id: str) -> str:
 async def _stream_handler(client, session_id, content, tabbit_model, req_model, completion_id, token_name, token_id, use_v3=False):
     start = time.time()
     error_msg = ""
+    yielded_text = ""
     try:
         yield f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': ''}, 'finish_reason': None}]})}\n\n"
 
@@ -431,9 +432,8 @@ async def _stream_handler(client, session_id, content, tabbit_model, req_model, 
                 et, ed = event["event"], event["data"]
                 if et == "error":
                     error_msg = ed.get("message", str(ed))
-                    yield f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]})}\n\n"
-                    yield "data: [DONE]\n\n"
-                    return
+                    logger.warning(f"[DEBUG] V3 stream error: {error_msg}")
+                    break
                 if et == "message_chunk":
                     if "content" in ed:
                         chunk = {
@@ -441,6 +441,7 @@ async def _stream_handler(client, session_id, content, tabbit_model, req_model, 
                             "object": "chat.completion.chunk",
                             "choices": [{"index": 0, "delta": {"content": ed["content"]}, "finish_reason": None}],
                         }
+                        yielded_text += ed["content"]
                         yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
                 elif et == "finish":
                     yield f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]})}\n\n"
@@ -453,9 +454,18 @@ async def _stream_handler(client, session_id, content, tabbit_model, req_model, 
                         "object": "chat.completion.chunk",
                         "choices": [{"index": 0, "delta": {"content": ed["content"]}, "finish_reason": None}],
                     }
+                    yielded_text += ed["content"]
                     yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
                 elif et in ("message_finish", "finish"):
                     yield f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]})}\n\n"
+                elif et == "error":
+                    error_msg = ed.get("message", str(ed)) if isinstance(ed, dict) else str(ed)
+                    logger.warning(f"[DEBUG] V1 stream error: {error_msg}")
+
+        # 上游错误（如用量耗尽 492、会员门 493）需显式回传，避免静默空回复
+        if error_msg and not yielded_text:
+            err = {"error": {"message": error_msg, "type": "upstream_error"}}
+            yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
 
         yield "data: [DONE]\n\n"
         if token_id:
@@ -685,6 +695,11 @@ async def _chat_completions(
         model=getattr(req, 'model', 'unknown'), token_name=token_name,
         stream=False, status="success" if not error_msg else "error", duration=duration, error=error_msg
     ))
+
+    # 上游错误（用量耗尽 492 / 会员门 493 等）显式回传，避免 downstream 收到空字符串
+    if error_msg:
+        code = 429 if ("用量" in error_msg or "492" in error_msg or "429" in error_msg) else 502
+        raise HTTPException(status_code=code, detail=error_msg)
 
     input_tokens = len(content) // 4
     output_tokens = len(full_text) // 4
